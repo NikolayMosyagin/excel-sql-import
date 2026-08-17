@@ -18,18 +18,22 @@ def read_imports(root: Path) -> list[ImportConfig]:
         raise ValueError(f"Required configuration key '{IMPORTS_KEY}' is missing.")
 
     imports = data[IMPORTS_KEY]
-    if len(imports) == 0:
+    if not isinstance(imports, list):
+        raise TypeError(f"Configuration key '{IMPORTS_KEY}' must be a list.")
+    if not imports:
         raise ValueError(f"Configuration key '{IMPORTS_KEY}' cannot be empty.")
+    
     import_configs: list[ImportConfig] = []
     for import_data in imports:
+        if not isinstance(import_data, dict):
+            raise TypeError(f"Import configuration must be a dictionary.")
         try:
             import_configs.append(ImportConfig(**import_data))
-        except TypeError as type_error:
+        except (TypeError, ValueError) as original_error:
             raise ValueError(
                 f"Invalid import configuration '{import_data.get('name', 'unknown')}':\n"
-                f"{type_error}"
-
-            )
+                f"{original_error}"
+            ) from original_error
     return import_configs
 
 
