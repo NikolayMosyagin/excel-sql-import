@@ -1,0 +1,13 @@
+# Local data files
+data/*
+!data/.gitkeep
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
