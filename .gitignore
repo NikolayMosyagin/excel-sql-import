@@ -1,6 +1,7 @@
 # Local data files
 data/*
 !data/.gitkeep
+!data/sample_sales.xlsx
 
 # Excel temporary files
 ~$*.xlsx
@@ -11,3 +12,7 @@ data/*
 .idea/
 Thumbs.db
 .DS_Store
+.venv/
+venv/
+__pycache__/
+*.py[cod]
