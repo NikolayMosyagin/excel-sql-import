@@ -1,6 +1,10 @@
 from pathlib import Path
+import os
 import tomllib
 import pandas as pd
+from dotenv import load_dotenv
+
+from mssql_python import connect
 
 from src.import_config import ImportConfig
 
@@ -59,10 +63,29 @@ def validate_excel_sources(root: Path, import_configs: list[ImportConfig]) -> No
             raise ValueError(f"Sheet '{import_config.sheet}' in source file '{source_file}' is empty.")
 
 
+def validate_target_tables(import_configs: list[ImportConfig]) -> None:
+    check_query = """
+SELECT 1
+FROM sys.tables AS t
+JOIN sys.schemas as s
+	ON s.schema_id = t.schema_id
+WHERE s.name = %(schema)s
+	AND t.name = %(table)s"""
+    with connect(os.getenv("SQL_CONNECTION_STRING")) as conn:
+        for import_config in import_configs:
+            with conn.cursor() as cursor:
+                cursor.execute(check_query, {'schema': import_config.schema, 'table': import_config.table})
+                row_data = cursor.fetchone()
+                if row_data is None:
+                    raise ValueError(f"Target table '{import_config.schema}.{import_config.table}' does not exist.")
+
+
 root_path = Path(__file__).resolve().parents[1]
+load_dotenv()
 import_configs = read_imports(root_path)
 validate_import_sources(root_path, import_configs)
 validate_excel_sources(root_path, import_configs)
+validate_target_tables(import_configs)
 
 for import_config in import_configs:
     source_file = root_path / import_config.file
@@ -75,4 +98,3 @@ Target: {import_config.schema}.{import_config.table}
 Rows: {rows}
 Columns: {columns}"""
     )
-

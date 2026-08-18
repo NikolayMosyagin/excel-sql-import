@@ -2,6 +2,7 @@
 data/*
 !data/.gitkeep
 !data/sample_sales.xlsx
+.env
 
 # Excel temporary files
 ~$*.xlsx

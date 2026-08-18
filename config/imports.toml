@@ -1,5 +1,5 @@
 [[imports]]
-name = "    "
+name = "sales"
 file = "data/sample_sales.xlsx"
 sheet = "Sales"
 schema = "dbo"
