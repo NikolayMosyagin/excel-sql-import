@@ -146,11 +146,12 @@ VALUES({', '.join('?' for _ in range(len(column_names)))})"""
             while index < rows:
                 values = list(df.iloc[index:index+batch_size].itertuples(index=False))
                 cursor.executemany(insert_query, values)
-                index += batch
+                index += batch_size
             conn.commit()
     except Exception:
         conn.rollback()
         raise
+
 
 def quote_identifier(identifier: str) -> str:
     return f"[{identifier.replace(']', ']]')}]"
