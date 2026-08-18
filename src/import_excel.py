@@ -144,7 +144,10 @@ VALUES({', '.join('?' for _ in range(len(column_names)))})"""
             cursor.execute(delete_query)
             index = 0
             while index < rows:
-                values = list(df.iloc[index:index+batch_size].itertuples(index=False))
+                values = [
+                    normalize_row(row) 
+                    for row in df.iloc[index:index+batch_size].itertuples(index=False, name=None)
+                ]
                 cursor.executemany(insert_query, values)
                 index += batch_size
             conn.commit()
@@ -155,6 +158,10 @@ VALUES({', '.join('?' for _ in range(len(column_names)))})"""
 
 def quote_identifier(identifier: str) -> str:
     return f"[{identifier.replace(']', ']]')}]"
+
+
+def normalize_row(row: tuple) -> tuple:
+    return tuple(None if pd.isna(value) else value for value in row)
 
 
 root_path = Path(__file__).resolve().parents[1]
