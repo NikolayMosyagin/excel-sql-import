@@ -124,6 +124,37 @@ ORDER BY c.column_id"""
             raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
 
 
+def import_excel_data(root: Path, conn: Connection, import_config: ImportConfig) -> None:
+    source_file = root / import_config.file
+    df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine="openpyxl")
+    rows = df.shape[0]
+    target_table = (
+        f"{quote_identifier(import_config.schema)}."
+        f"{quote_identifier(import_config.table)}"
+    )
+    column_names = df.columns.to_list()
+    batch_size = 1000
+    delete_query = f"DELETE FROM {target_table}"
+    insert_query = f"""
+INSERT INTO {target_table}
+({', '.join(quote_identifier(s) for s in column_names)})
+VALUES({', '.join('?' for _ in range(len(column_names)))})"""
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(delete_query)
+            index = 0
+            while index < rows:
+                values = list(df.iloc[index:index+batch_size].itertuples(index=False))
+                cursor.executemany(insert_query, values)
+                index += batch
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+def quote_identifier(identifier: str) -> str:
+    return f"[{identifier.replace(']', ']]')}]"
+
 
 root_path = Path(__file__).resolve().parents[1]
 load_dotenv()
@@ -134,14 +165,8 @@ with connect(os.getenv("SQL_CONNECTION_STRING")) as conn:
     validate_target_tables(conn, import_configs)
     validate_target_columns(root_path, conn, import_configs)
 
-for import_config in import_configs:
-    source_file = root_path / import_config.file
-    df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine='openpyxl')
-    rows, columns = df.shape
-    print(f"""Import: {import_config.name}
-Source: {import_config.file}
-Sheet: {import_config.sheet}
-Target: {import_config.schema}.{import_config.table}
-Rows: {rows}
-Columns: {columns}"""
-    )
+    for import_config in import_configs:
+        import_excel_data(root_path, conn, import_config)
+
+
+print("Done!")

@@ -1,6 +1,6 @@
 [[imports]]
 name = "report_data"
-file = "data/sample_report_data.xlsx"
+file = "data/report_data_2505.xlsx"
 sheet = "ReportData"
 schema = "dbo"
 table = "ReportData"
