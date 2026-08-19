@@ -1,4 +1,5 @@
 from pathlib import Path
+from decimal import Decimal
 import os
 import tomllib
 import pandas as pd
@@ -60,10 +61,29 @@ def validate_integer_values(sql_column: SqlMetaColumn, series: pd.Series) -> Non
             )
 
         
-
-
 def validate_decimal_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
-    pass
+    for index, value in series.items():
+        excel_row = index + 2
+        if type(value) not in (int, float):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a numeric value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        normalized_value = Decimal(str(value)).normalize()
+        decimal_tuple = normalized_value.as_tuple()
+        fraction_digits = max(-decimal_tuple.exponent, 0)
+        integer_digits = max(len(decimal_tuple.digits) + decimal_tuple.exponent, 0)
+        if integer_digits == 1 and decimal_tuple.digits[0] == 0:
+            integer_digits = 0
+        if fraction_digits > sql_column.scale or integer_digits > sql_column.precision - sql_column.scale:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value '{value}' does not fit decimal({sql_column.precision}, {sql_column.scale}): "
+                f"allowed up to {sql_column.precision - sql_column.scale} integer digits "
+                f"and {sql_column.scale} fractional digits, but got {integer_digits} and {fraction_digits}."
+            )
 
 
 def validate_float_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
