@@ -42,7 +42,24 @@ def validate_string_values(sql_column: SqlMetaColumn, series: pd.Series) -> None
         
 
 def validate_integer_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
-    pass
+    for index, value in series.items():
+        excel_row = index + 2
+        type_value = type(value)
+        if type_value is not int and (type_value is not float or not value.is_integer()):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected an integer value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+        min_value, max_value = MINMAX_VALUE_BY_SQL_TYPE[sql_column.type_name]
+        int_value = int(value)
+        if int_value < min_value or int_value > max_value:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value must be between {min_value} and {max_value}, but got {int_value}."
+            )
+
+        
 
 
 def validate_decimal_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
@@ -67,8 +84,10 @@ VALIDATOR_BY_SQL_TYPE = {
     "smallint": validate_integer_values,
     "int": validate_integer_values,
     "bigint": validate_integer_values,
+
     "decimal": validate_decimal_values,
     "numeric": validate_decimal_values,
+
     "float": validate_float_values,
     "real": validate_float_values,
 
@@ -76,6 +95,13 @@ VALIDATOR_BY_SQL_TYPE = {
     "datetime": validate_datetime_values,
     "datetime2": validate_datetime_values,
     "smalldatetime": validate_datetime_values
+}
+
+MINMAX_VALUE_BY_SQL_TYPE = {
+    "tinyint": (0, 2**8 - 1),
+    "smallint": (-2**15, 2**15 - 1),
+    "int": (-2**31, 2**31 - 1),
+    "bigint": (-2**63, 2**63 - 1)
 }
 
 

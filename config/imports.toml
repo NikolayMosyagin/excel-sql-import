@@ -1,6 +1,6 @@
 [[imports]]
-name = "test_string_validator"
-file = "data/test_string_validator.xlsx"
-sheet = "test_string"
+name = "validate_int"
+file = "data/test_int_validator.xlsx"
+sheet = "test_int"
 schema = "dbo"
-table = "test_string"
+table = "test_int"
