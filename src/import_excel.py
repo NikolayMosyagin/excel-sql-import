@@ -7,6 +7,76 @@ from dotenv import load_dotenv
 from mssql_python import connect, Connection
 
 from src.import_config import ImportConfig
+from src.sql_meta_column import SqlMetaColumn
+
+
+def validate_string_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    unlimited_length = (
+        sql_column.type_name in ('varchar', 'nvarchar') 
+        and sql_column.max_length == -1
+    )
+
+    if not unlimited_length:
+        max_length = (
+            sql_column.max_length 
+            if sql_column.type_name in ('varchar', 'char') else 
+            (sql_column.max_length // 2)
+        )
+
+    for index, value in series.items():
+        excel_row = index + 2
+
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a string value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        if not unlimited_length and len(value) > max_length:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value exceeds the maximum length of {max_length} characters "
+                f"(got {len(value)})."
+            )
+        
+
+def validate_integer_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    pass
+
+
+def validate_decimal_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    pass
+
+
+def validate_float_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    pass
+
+
+def validate_datetime_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    pass
+
+
+VALIDATOR_BY_SQL_TYPE = {
+    "varchar": validate_string_values,
+    "nvarchar": validate_string_values,
+    "char": validate_string_values,
+    "nchar": validate_string_values,
+
+    "tinyint": validate_integer_values,
+    "smallint": validate_integer_values,
+    "int": validate_integer_values,
+    "bigint": validate_integer_values,
+    "decimal": validate_decimal_values,
+    "numeric": validate_decimal_values,
+    "float": validate_float_values,
+    "real": validate_float_values,
+
+    "date": validate_datetime_values,
+    "datetime": validate_datetime_values,
+    "datetime2": validate_datetime_values,
+    "smalldatetime": validate_datetime_values
+}
 
 
 def read_imports(root: Path) -> list[ImportConfig]:
@@ -79,65 +149,79 @@ WHERE s.name = %(schema)s
                 raise ValueError(f"Target table '{import_config.schema}.{import_config.table}' does not exist.")
 
 
-def validate_target_columns(root: Path, conn: Connection, import_configs: list[ImportConfig]) -> None:
-    get_columns_query = """
-SELECT c.name
-FROM sys.columns as c
-JOIN sys.tables as t
-    ON c.object_id = t.object_id
-JOIN sys.schemas as s
-    ON t.schema_id = s.schema_id
-WHERE s.name = %(schema)s
-    AND t.name = %(table)s
-    AND c.is_identity = 0
-    AND c.is_computed = 0
-ORDER BY c.column_id"""
-    for import_config in import_configs:
-        source_file = root / import_config.file
-        df = pd.read_excel(
-            source_file, 
-            sheet_name=import_config.sheet,
-            nrows=0,
-            engine="openpyxl"
+def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
+    source_file = root / import_config.file
+    df = pd.read_excel(
+        source_file, 
+        sheet_name=import_config.sheet,
+        nrows=0,
+        engine="openpyxl"
+    )
+    excel_columns = set(df.columns.to_list())
+    sql_columns = set(column.name for column in sql_meta_columns)
+    missing_columns = sql_columns - excel_columns
+    extra_columns = excel_columns - sql_columns
+    errors = []
+    if missing_columns:
+        errors.append(
+            f"Excel source is missing columns required by "
+            f"'{import_config.schema}.{import_config.table}': "
+            f"{', '.join(sorted(missing_columns))}."
         )
-        excel_columns = set(df.columns.to_list())
-        with conn.cursor() as cursor:
-            cursor.execute(get_columns_query, {'schema': import_config.schema, 'table': import_config.table})
-            sql_columns = {row[0] for row in cursor.fetchall()}
-
-        missing_columns = sql_columns - excel_columns
-        extra_columns = excel_columns - sql_columns
-        errors = []
-        if missing_columns:
-            errors.append(
-                f"Excel source is missing columns required by "
-                f"'{import_config.schema}.{import_config.table}': "
-                f"{', '.join(sorted(missing_columns))}."
-            )
-        if extra_columns:
-            errors.append(
-                f"Excel source contains columns not present in "
-                f"'{import_config.schema}.{import_config.table}': "
-                f"{', '.join(sorted(extra_columns))}."
-            )
-        if errors:
-            raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
+    if extra_columns:
+        errors.append(
+            f"Excel source contains columns not present in "
+            f"'{import_config.schema}.{import_config.table}': "
+            f"{', '.join(sorted(extra_columns))}."
+        )
+    if errors:
+        raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
 
 
-def import_excel_data(root: Path, conn: Connection, import_config: ImportConfig) -> None:
+def validate_excel_data(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
     source_file = root / import_config.file
     df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine="openpyxl")
+
+    for column in sql_meta_columns:
+        series = df[column.name]
+        if not column.is_nullable and (count_na := series.isna().sum()) > 0:
+            raise ValueError(
+                f"Import '{import_config.name}':\n"
+                f"Column '{column.name}' does not allow NULL values, but Excel contains {count_na} empty values."
+            )
+
+        validator = VALIDATOR_BY_SQL_TYPE.get(column.type_name)
+        if validator is None:
+            raise ValueError(
+                f"Import '{import_config.name}':\n"
+                f"SQL type '{column.type_name}' of column '{column.name}' is not supported."
+            )
+        validator(column, series.dropna())
+
+        
+
+def import_excel_data(
+        root: Path, 
+        conn: Connection, 
+        sql_meta_columns: list[SqlMetaColumn], 
+        import_config: ImportConfig
+) -> None:
+    source_file = root / import_config.file
+    df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine="openpyxl")
+    column_names = [column.name for column in sql_meta_columns]
+    df = df[column_names]
+
     rows = df.shape[0]
     target_table = (
         f"{quote_identifier(import_config.schema)}."
         f"{quote_identifier(import_config.table)}"
     )
-    column_names = df.columns.to_list()
+
     batch_size = 1000
     delete_query = f"DELETE FROM {target_table}"
     insert_query = f"""
 INSERT INTO {target_table}
-({', '.join(quote_identifier(s) for s in column_names)})
+({', '.join(quote_identifier(name) for name in column_names)})
 VALUES({', '.join('?' for _ in range(len(column_names)))})"""
     try:
         with conn.cursor() as cursor:
@@ -156,6 +240,36 @@ VALUES({', '.join('?' for _ in range(len(column_names)))})"""
         raise
 
 
+def get_sql_meta_columns(conn: Connection, import_configs: list[ImportConfig]) -> list[list[SqlMetaColumn]]:
+    get_columns_query = """
+SELECT 
+    c.name,
+	types.name as type_name,
+	c.max_length,
+	c.precision,
+	c.scale,
+	c.is_nullable
+FROM sys.columns as c
+JOIN sys.types as types
+	ON types.user_type_id = c.user_type_id
+JOIN sys.tables as t
+    ON c.object_id = t.object_id
+JOIN sys.schemas as s
+    ON t.schema_id = s.schema_id
+WHERE s.name = %(schema)s
+    AND t.name = %(table)s
+    AND c.is_identity = 0
+    AND c.is_computed = 0
+ORDER BY c.column_id"""
+
+    sql_columns = []
+    for import_config in import_configs:
+        with conn.cursor() as cursor:
+            cursor.execute(get_columns_query, {'schema': import_config.schema, 'table': import_config.table})
+            sql_columns.append([SqlMetaColumn(*row) for row in cursor.fetchall()])
+    return sql_columns
+
+
 def quote_identifier(identifier: str) -> str:
     return f"[{identifier.replace(']', ']]')}]"
 
@@ -171,10 +285,13 @@ validate_import_sources(root_path, import_configs)
 validate_excel_sources(root_path, import_configs)
 with connect(os.getenv("SQL_CONNECTION_STRING")) as conn:
     validate_target_tables(conn, import_configs)
-    validate_target_columns(root_path, conn, import_configs)
+    sql_columns = get_sql_meta_columns(conn, import_configs)
+    for i, import_config in enumerate(import_configs):
+        validate_target_columns(root_path, sql_columns[i], import_config)
+        validate_excel_data(root_path, sql_columns[i], import_config)
 
-    for import_config in import_configs:
-        import_excel_data(root_path, conn, import_config)
+    for i, import_config in enumerate(import_configs):
+        import_excel_data(root_path, conn, sql_columns[i], import_config)
 
 
 print("Done!")
