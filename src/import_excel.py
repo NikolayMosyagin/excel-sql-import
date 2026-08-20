@@ -447,21 +447,24 @@ def quote_identifier(identifier: str) -> str:
 def normalize_row(row: tuple) -> tuple:
     return tuple(None if pd.isna(value) else value for value in row)
 
+def main():
+    root_path = Path(__file__).resolve().parents[1]
+    load_dotenv()
+    import_configs = read_imports(root_path)
+    validate_import_sources(root_path, import_configs)
+    validate_excel_sources(root_path, import_configs)
+    with connect(os.getenv("SQL_CONNECTION_STRING")) as conn:
+        validate_target_tables(conn, import_configs)
+        sql_columns = get_sql_meta_columns(conn, import_configs)
+        for i, import_config in enumerate(import_configs):
+            validate_target_columns(root_path, sql_columns[i], import_config)
+            validate_excel_data(root_path, sql_columns[i], import_config)
 
-root_path = Path(__file__).resolve().parents[1]
-load_dotenv()
-import_configs = read_imports(root_path)
-validate_import_sources(root_path, import_configs)
-validate_excel_sources(root_path, import_configs)
-with connect(os.getenv("SQL_CONNECTION_STRING")) as conn:
-    validate_target_tables(conn, import_configs)
-    sql_columns = get_sql_meta_columns(conn, import_configs)
-    for i, import_config in enumerate(import_configs):
-        validate_target_columns(root_path, sql_columns[i], import_config)
-        validate_excel_data(root_path, sql_columns[i], import_config)
-
-    for i, import_config in enumerate(import_configs):
-        import_excel_data(root_path, conn, sql_columns[i], import_config)
+        for i, import_config in enumerate(import_configs):
+            import_excel_data(root_path, conn, sql_columns[i], import_config)
+            
+    print("Done!")
 
 
-print("Done!")
+if __name__ == '__main__':
+    main()
