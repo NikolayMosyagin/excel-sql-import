@@ -20,8 +20,8 @@
 #table = "test_decimal"
 
 [[imports]]
-name = "validate_datetime"
-file = "data/test_datetime_validator.xlsx"
-sheet = "test_datetime"
+name = "e2e_test"
+file = "data/e2e_import_test.xlsx"
+sheet = "RollbackFailure"
 schema = "dbo"
-table = "test_date"
+table = "ImportE2ETest"
