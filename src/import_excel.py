@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 from decimal import Decimal
 import math
 import os
@@ -124,7 +125,97 @@ def validate_float_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
 
 
 def validate_datetime_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
-    pass
+    for index, value in series.items():
+        excel_row = index + 2
+
+        if not isinstance(value, datetime):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a datetime value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        min_date, max_date = datetime(1753, 1, 1), datetime(9999, 12, 31, 23, 59, 59, 997000)
+        if value < min_date or value > max_date:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value '{value}' is outside the supported range for SQL type 'datetime' "
+                f"(1753-01-01 00:00:00.000 through 9999-12-31 23:59:59.997)."
+            )
+        
+        if (value.microsecond % 10000) not in (0, 3000, 7000):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value '{value}' does not fit SQL type 'datetime': "
+                f"fractional seconds must match the supported precision "
+                f"(.000, .003, .007, .010, .013, .017, ...)."
+            )
+
+
+
+def validate_datetime2_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    for index, value in series.items():
+        excel_row = index + 2
+
+        if not isinstance(value, datetime):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a datetime value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        if sql_column.scale < 6 and value.microsecond % (10 ** (6 - sql_column.scale)) > 0:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value '{value}' does not fit SQL type 'datetime2({sql_column.scale})': "
+                f"fractional seconds exceed the supported precision."
+            )
+
+
+def validate_smalldatetime_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    for index, value in series.items():
+        excel_row = index + 2
+
+        if not isinstance(value, datetime):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a datetime value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        min_date, max_date = datetime(1900, 1, 1, 0, 0), datetime(2079, 6, 6, 23, 59)
+        if value < min_date or value > max_date:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value '{value}' is outside the supported range for SQL type 'smalldatetime' "
+                f"(1900-01-01 through 2079-06-06)."
+            )
+        
+        if value.second > 0 or value.microsecond > 0:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value '{value}' does not fit SQL type 'smalldatetime': "
+                f"seconds and fractional seconds must be zero."
+            )
+
+
+def validate_date_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
+    for index, value in series.items():
+        excel_row = index + 2
+
+        if not isinstance(value, datetime):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a date value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        if value.hour > 0 or value.minute > 0 or value.second > 0 or value.microsecond > 0:
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"value must not contain a time component for SQL type 'date', "
+                f"but got '{value}'.    "
+            )
 
 
 VALIDATOR_BY_SQL_TYPE = {
@@ -144,10 +235,10 @@ VALIDATOR_BY_SQL_TYPE = {
     "float": validate_float_values,
     "real": validate_float_values,
 
-    "date": validate_datetime_values,
+    "date": validate_date_values,
     "datetime": validate_datetime_values,
-    "datetime2": validate_datetime_values,
-    "smalldatetime": validate_datetime_values
+    "datetime2": validate_datetime2_values,
+    "smalldatetime": validate_smalldatetime_values
 }
 
 MINMAX_VALUE_BY_SQL_TYPE = {

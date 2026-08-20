@@ -12,9 +12,16 @@
 #schema = "dbo"
 #table = "ReportData"
 
+#[[imports]]
+#name = "validate_decimal"
+#file = "data/test_decimal_validator.xlsx"
+#sheet = "test_decimal"
+#schema = "dbo"
+#table = "test_decimal"
+
 [[imports]]
-name = "validate_decimal"
-file = "data/test_decimal_validator.xlsx"
-sheet = "test_decimal"
+name = "validate_datetime"
+file = "data/test_datetime_validator.xlsx"
+sheet = "test_datetime"
 schema = "dbo"
-table = "test_decimal"
+table = "test_date"
