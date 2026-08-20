@@ -1,5 +1,6 @@
 from pathlib import Path
 from decimal import Decimal
+import math
 import os
 import tomllib
 import pandas as pd
@@ -71,6 +72,12 @@ def validate_decimal_values(sql_column: SqlMetaColumn, series: pd.Series) -> Non
                 f"of type '{type(value).__name__}'."
             )
 
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a finite number, but got '{value}'."
+            )
+
         normalized_value = Decimal(str(value)).normalize()
         decimal_tuple = normalized_value.as_tuple()
         fraction_digits = max(-decimal_tuple.exponent, 0)
@@ -87,7 +94,33 @@ def validate_decimal_values(sql_column: SqlMetaColumn, series: pd.Series) -> Non
 
 
 def validate_float_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
-    pass
+    for index, value in series.items():
+        excel_row = index + 2
+
+        if type(value) not in (int, float):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a numeric value, but got '{value}' "
+                f"of type '{type(value).__name__}'."
+            )
+
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"expected a finite number, but got '{value}'."
+            )
+        
+        min_value, max_value = (
+            (2.23E-308, 1.79E+308)
+            if sql_column.type_name == 'float' and sql_column.precision >= 25 else
+            (1.18E-38, 3.40E+38)
+        )
+
+        if value != 0 and (abs(value) < min_value or abs(value) > max_value):
+            raise ValueError(
+                f"Column '{sql_column.name}', row {excel_row}: "
+                f"absolute value must be between {min_value} and {max_value}, or equal to 0, but got {abs(value)}."
+            ) 
 
 
 def validate_datetime_values(sql_column: SqlMetaColumn, series: pd.Series) -> None:
