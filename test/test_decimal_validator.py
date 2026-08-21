@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 
 from src.sql_meta_column import SqlMetaColumn
-from src.import_excel import validate_decimal_values
+from src.value_validators import validate_decimal_values
 
 
 @pytest.mark.parametrize(

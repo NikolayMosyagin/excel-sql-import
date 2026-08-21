@@ -3,7 +3,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from src.import_excel import validate_date_values
+from src.value_validators import validate_date_values
 from src.sql_meta_column import SqlMetaColumn
 
 

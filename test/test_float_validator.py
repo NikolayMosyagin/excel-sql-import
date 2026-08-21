@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.import_excel import validate_float_values
+from src.value_validators import validate_float_values
 from src.sql_meta_column import SqlMetaColumn
 
 
