@@ -1,6 +1,5 @@
 from pathlib import Path
 import os
-import tomllib
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -9,60 +8,8 @@ from mssql_python import connect, Connection
 from src.import_config import ImportConfig
 from src.sql_meta_column import SqlMetaColumn
 from src.value_validators import VALIDATOR_BY_SQL_TYPE
-
-
-def read_imports(root: Path) -> list[ImportConfig]:
-    imports_path = root / 'config' / 'imports.toml'
-    IMPORTS_KEY = 'imports'
-    if not imports_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: '{imports_path}'.")
-    
-    with open(imports_path, "rb") as imports_file:
-        data = tomllib.load(imports_file)
-
-    if IMPORTS_KEY not in data:
-        raise ValueError(f"Required configuration key '{IMPORTS_KEY}' is missing.")
-
-    imports = data[IMPORTS_KEY]
-    if not isinstance(imports, list):
-        raise TypeError(f"Configuration key '{IMPORTS_KEY}' must be a list.")
-    if not imports:
-        raise ValueError(f"Configuration key '{IMPORTS_KEY}' cannot be empty.")
-    
-    import_configs: list[ImportConfig] = []
-    for import_data in imports:
-        if not isinstance(import_data, dict):
-            raise TypeError(f"Import configuration must be a dictionary.")
-        try:
-            import_configs.append(ImportConfig(**import_data))
-        except (TypeError, ValueError) as original_error:
-            raise ValueError(
-                f"Invalid import configuration '{import_data.get('name', 'unknown')}':\n"
-                f"{original_error}"
-            ) from original_error
-    return import_configs
-
-
-def validate_import_sources(root: Path, import_configs: list[ImportConfig]) -> None:
-    for import_config in import_configs:
-        source_file = root / import_config.file
-        if not source_file.exists():
-            raise FileNotFoundError(f"Source file not found: '{source_file}'.")
-    
-        if source_file.is_dir():
-            raise IsADirectoryError(f"Expected a file, but found a directory: '{source_file}'.")
-
-
-def validate_excel_sources(root: Path, import_configs: list[ImportConfig]) -> None:
-    for import_config in import_configs:
-        source_file = root / import_config.file
-        with pd.ExcelFile(source_file, engine='openpyxl') as excel_file:
-            if import_config.sheet not in excel_file.sheet_names:
-                raise ValueError(f"Source file '{source_file}' doesn't contain sheet '{import_config.sheet}'.")
-            df = excel_file.parse(sheet_name=import_config.sheet, nrows=1)
-        
-        if df.empty:
-            raise ValueError(f"Sheet '{import_config.sheet}' in source file '{source_file}' is empty.")
+from src.config_loader import read_imports
+from src.import_source_validators import validate_excel_sources, validate_import_sources
 
 
 def validate_target_tables(conn: Connection, import_configs: list[ImportConfig]) -> None:
