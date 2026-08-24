@@ -13,6 +13,14 @@ from src.excel_data_validators import validate_excel_data, validate_target_colum
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
 
 
+def quote_identifier(identifier: str) -> str:
+    return f"[{identifier.replace(']', ']]')}]"
+
+
+def normalize_row(row: tuple) -> tuple:
+    return tuple(None if pd.isna(value) else value for value in row)
+
+
 def import_excel_data(
         root: Path, 
         conn: Connection, 
@@ -52,13 +60,6 @@ VALUES({', '.join('?' for _ in range(len(column_names)))})"""
         conn.rollback()
         raise
 
-
-def quote_identifier(identifier: str) -> str:
-    return f"[{identifier.replace(']', ']]')}]"
-
-
-def normalize_row(row: tuple) -> tuple:
-    return tuple(None if pd.isna(value) else value for value in row)
 
 def main():
     root_path = Path(__file__).resolve().parents[1]
