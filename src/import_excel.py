@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 from mssql_python import connect, Connection
 
-from src.import_config import ImportConfig
+from src.import_config import ImportConfig, ImportMode
 from src.sql_meta_column import SqlMetaColumn
 from src.config_loader import read_imports
 from src.import_source_validators import validate_excel_sources, validate_import_sources
@@ -45,7 +45,8 @@ INSERT INTO {target_table}
 ({', '.join(quote_identifier(name) for name in column_names)})
 VALUES({', '.join('?' for _ in range(len(column_names)))})"""
     with conn.cursor() as cursor:
-        cursor.execute(delete_query)
+        if import_config.mode == ImportMode.REPLACE:
+            cursor.execute(delete_query)
         index = 0
         while index < rows:
             values = [

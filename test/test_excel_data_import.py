@@ -11,7 +11,7 @@ from src.import_excel import (
     import_excel_data,
     import_all_data
 )
-from src.import_config import ImportConfig
+from src.import_config import ImportConfig, ImportMode
 
 
 @pytest.mark.parametrize(
@@ -39,8 +39,12 @@ def test_normalize_row(source_value: tuple, target_value: tuple):
     assert normalize_row(source_value) == target_value
 
 
-def test_import_excel_data_imports_rows(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1")
+@pytest.mark.parametrize(
+    "mode",
+    [ImportMode.REPLACE, ImportMode.APPEND]
+)
+def test_import_excel_data_imports_rows(tmp_path: Path, mode: ImportMode):
+    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", mode)
 
     sql_columns = [
         SqlMetaColumn("column1", "nvarchar", 100, 0, 0, False),
@@ -63,9 +67,13 @@ def test_import_excel_data_imports_rows(tmp_path: Path):
 
     import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
 
-    cursor_mock.execute.assert_called_once_with(
-        "DELETE FROM [schema1].[table1]"
-    )
+    if mode == ImportMode.REPLACE:
+        cursor_mock.execute.assert_called_once_with(
+            "DELETE FROM [schema1].[table1]"
+        )
+    else:
+        cursor_mock.execute.assert_not_called()
+
     cursor_mock.executemany.assert_called_once()
     insert_query, values = cursor_mock.executemany.call_args.args
     assert "[column1], [column2]" in insert_query

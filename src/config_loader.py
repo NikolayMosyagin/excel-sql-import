@@ -1,7 +1,7 @@
 from pathlib import Path
 import tomllib
 
-from src.import_config import ImportConfig
+from src.import_config import ImportConfig, ImportMode
 
 
 def read_imports(root: Path) -> list[ImportConfig]:
@@ -27,6 +27,8 @@ def read_imports(root: Path) -> list[ImportConfig]:
         if not isinstance(import_data, dict):
             raise TypeError(f"Import configuration must be a dictionary.")
         try:
+            if (source_mode := import_data.get("mode")) is not None:
+                import_data["mode"] = ImportMode(source_mode)
             import_configs.append(ImportConfig(**import_data))
         except (TypeError, ValueError) as original_error:
             raise ValueError(

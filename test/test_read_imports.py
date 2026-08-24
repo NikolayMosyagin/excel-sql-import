@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from src.config_loader import read_imports
+from src.import_config import ImportMode
 
 
 def create_imports_file(root: Path, content: str) -> None:
@@ -68,6 +69,29 @@ table = 'ImportE2ETest'"""
     assert import_config.sheet == "RollbackFailure"
     assert import_config.schema == "dbo"
     assert import_config.table == "ImportE2ETest"
+    assert import_config.mode == ImportMode.REPLACE
+
+
+def test_read_imports_return_valid_import_config_with_mode(tmp_path: Path):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'append'"""
+    create_imports_file(tmp_path, import_text)
+
+    import_configs = read_imports(tmp_path)
+    assert len(import_configs) == 1
+    import_config = import_configs[0]
+    assert import_config.name == "e2e_test"
+    assert import_config.file == "data/e2e_import_test.xlsx"
+    assert import_config.sheet == "RollbackFailure"
+    assert import_config.schema == "dbo"
+    assert import_config.table == "ImportE2ETest"
+    assert import_config.mode == ImportMode.APPEND
 
 
 def test_read_imports_return_multiple_import_configs(tmp_path: Path):
@@ -95,7 +119,7 @@ table = "ReportData"
 
 @pytest.mark.parametrize(
     "invalid_key",
-    [ "name", "file", "sheet", "schema", "table"]
+    [ "name", "file", "sheet", "schema", "table", "mode"]
 )
 def test_read_imports_reject_invalid_import_config_value(tmp_path: Path, invalid_key: str):
     imports = {
@@ -103,7 +127,8 @@ def test_read_imports_reject_invalid_import_config_value(tmp_path: Path, invalid
         "file": "data/e2e_import_test.xlsx",
         "sheet": "RollbackFailure",
         "schema": "dbo",
-        "table": "ImportE2ETest"
+        "table": "ImportE2ETest",
+        "mode": "append"
     }
     imports[invalid_key] = 2
     import_text = "[[imports]]\n" + "\n".join(f"{key} = {value!r}" for key, value in imports.items())
@@ -161,5 +186,21 @@ def test_read_imports_reject_blank_import_config_value(tmp_path: Path, empty_val
     imports["file"] = empty_value
     import_text = "[[imports]]\n" + "\n".join(f"{key} = {value!r}" for key, value in imports.items())
     create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match="Invalid import configuration"):
+        read_imports(tmp_path)
+
+
+def test_read_imports_reject_unknown_mode(tmp_path: Path):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'update'
+"""
+    create_imports_file(tmp_path, import_text)
+
     with pytest.raises(ValueError, match="Invalid import configuration"):
         read_imports(tmp_path)
