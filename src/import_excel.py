@@ -44,18 +44,28 @@ def import_excel_data(
 INSERT INTO {target_table}
 ({', '.join(quote_identifier(name) for name in column_names)})
 VALUES({', '.join('?' for _ in range(len(column_names)))})"""
+    with conn.cursor() as cursor:
+        cursor.execute(delete_query)
+        index = 0
+        while index < rows:
+            values = [
+                normalize_row(row) 
+                for row in df.iloc[index:index+batch_size].itertuples(index=False, name=None)
+            ]
+            cursor.executemany(insert_query, values)
+            index += batch_size
+
+
+def import_all_data(
+    root: Path,
+    conn: Connection, 
+    import_configs: list[ImportConfig],
+    sql_columns: list[list[SqlMetaColumn]]
+) -> None:
     try:
-        with conn.cursor() as cursor:
-            cursor.execute(delete_query)
-            index = 0
-            while index < rows:
-                values = [
-                    normalize_row(row) 
-                    for row in df.iloc[index:index+batch_size].itertuples(index=False, name=None)
-                ]
-                cursor.executemany(insert_query, values)
-                index += batch_size
-            conn.commit()
+        for import_config, sql_column in zip(import_configs, sql_columns, strict=True):
+            import_excel_data(root, conn, sql_column, import_config)
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -67,16 +77,19 @@ def main():
     import_configs = read_imports(root_path)
     validate_import_sources(root_path, import_configs)
     validate_excel_sources(root_path, import_configs)
-    with connect(os.getenv("SQL_CONNECTION_STRING")) as conn:
+    sql_connection_string = os.getenv("SQL_CONNECTION_STRING")
+    if sql_connection_string is None:
+        raise ValueError("SQL_CONNECTION_STRING should not be None")
+    
+    with connect(sql_connection_string) as conn:
         validate_target_tables(conn, import_configs)
         sql_columns = get_sql_meta_columns(conn, import_configs)
-        for i, import_config in enumerate(import_configs):
-            validate_target_columns(root_path, sql_columns[i], import_config)
-            validate_excel_data(root_path, sql_columns[i], import_config)
+        for import_config, sql_column in zip(import_configs, sql_columns, strict=True):
+            validate_target_columns(root_path, sql_column, import_config)
+            validate_excel_data(root_path, sql_column, import_config)
 
-        for i, import_config in enumerate(import_configs):
-            import_excel_data(root_path, conn, sql_columns[i], import_config)
-            
+        import_all_data(root_path, conn, import_configs, sql_columns)
+  
     print("Done!")
 
 
