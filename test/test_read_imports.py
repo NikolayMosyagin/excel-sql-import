@@ -204,3 +204,114 @@ mode = 'update'
 
     with pytest.raises(ValueError, match="Invalid import configuration"):
         read_imports(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "key_columns_text, expected_key_columns",
+    [
+        ("key_columns = [\"ID\"]", ("ID",)),
+        ("key_columns = [\"ReportDate\", \"Department\"]", ("ReportDate", "Department"))
+    ]
+)
+def test_read_imports_return_upsert_config_with_key_columns(
+    tmp_path: Path,
+    key_columns_text: str,
+    expected_key_columns: tuple[str, ...]
+):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'upsert'""" + "\n" + key_columns_text
+    create_imports_file(tmp_path, import_text)
+
+    import_configs = read_imports(tmp_path)
+    assert len(import_configs) == 1
+    assert import_configs[0].mode == ImportMode.UPSERT
+    assert import_configs[0].key_columns == expected_key_columns
+
+
+def test_read_imports_reject_upsert_without_key_columns(tmp_path: Path):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'upsert'"""
+
+    create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match="must not be empty for mode 'upsert'"):
+        read_imports(tmp_path)
+
+
+def test_read_imports_reject_upsert_with_empty_key_columns(tmp_path: Path):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'upsert'
+key_columns = []"""
+    create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match="The attribute 'key_columns' must not be empty for mode 'upsert'"):
+        read_imports(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "mode_value",
+    ["replace", "append"]
+)
+def test_read_imports_reject_key_columns_for_non_upsert_mode(tmp_path: Path, mode_value: str):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'""" + "\n" + f"mode = '{mode_value}'\n" + "key_columns = [\"ID\"]"
+    create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match=f"The attribute 'key_columns' must be empty for mode '{mode_value}'"):
+        read_imports(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "key_columns_value",
+    ["'Id'", 123]
+)
+def test_read_imports_reject_non_list_key_columns(tmp_path: Path, key_columns_value: object):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'upsert'""" + "\n" + f"key_columns = {key_columns_value}"
+    
+    create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match="Configuration key 'key_columns' must be a list"):
+        read_imports(tmp_path)
+
+
+def test_read_imports_reject_invalid_key_column_type(tmp_path: Path):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'upsert'
+key_columns = ["ID", 123]"""
+    create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match="All elements of 'key_columns' must be strings."):
+        read_imports(tmp_path)
+
+
