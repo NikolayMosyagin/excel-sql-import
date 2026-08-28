@@ -1,0 +1,18 @@
+# Copy this file to imports.toml and adjust values for your environment.
+
+[[imports]]
+name = "sales"
+file = "data/sample_sales.xlsx"
+sheet = "Sheet1"
+schema = "dbo"
+table = "Sales"
+mode = "replace"
+
+[[imports]]
+name = "products"
+file = "data/products.xlsx"
+sheet = "Products"
+schema = "dbo"
+table = "Products"
+mode = "upsert"
+key_columns = ["ID"]

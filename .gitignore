@@ -4,6 +4,7 @@ data/*
 !data/sample_sales.xlsx
 .env
 instructions/*
+config/imports.toml
 
 # Excel temporary files
 ~$*.xlsx
@@ -18,3 +19,9 @@ Thumbs.db
 venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+
+# PyInstaller
+build/
+dist/
+*.exe

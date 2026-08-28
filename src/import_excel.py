@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import sys
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -12,6 +13,13 @@ from src.import_source_validators import validate_excel_sources, validate_import
 from src.excel_data_validators import validate_excel_data, validate_target_columns
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
 from src.sql_data_import import write_dataframe, upsert_dataframe
+
+
+def get_root_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parents[1]
 
     
 def import_excel_data(
@@ -46,8 +54,8 @@ def import_all_data(
 
 
 def main():
-    root_path = Path(__file__).resolve().parents[1]
-    load_dotenv()
+    root_path = get_root_path()
+    load_dotenv(root_path / ".env")
     import_configs = read_imports(root_path)
     validate_import_sources(root_path, import_configs)
     validate_excel_sources(root_path, import_configs)
