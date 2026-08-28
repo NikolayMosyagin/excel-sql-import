@@ -52,8 +52,8 @@ def main():
     validate_import_sources(root_path, import_configs)
     validate_excel_sources(root_path, import_configs)
     sql_connection_string = os.getenv("SQL_CONNECTION_STRING")
-    if sql_connection_string is None:
-        raise ValueError("SQL_CONNECTION_STRING should not be None")
+    if sql_connection_string is None or sql_connection_string.strip() == "":
+        raise ValueError("Required environment variable 'SQL_CONNECTION_STRING' is not set or is empty.")
     
     with connect(sql_connection_string) as conn:
         validate_target_tables(conn, import_configs)
