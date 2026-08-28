@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.sql_meta_column import SqlMetaColumn
-from src.import_config import ImportConfig
+from src.import_config import ImportConfig, ImportMode
 from src.value_validators import VALIDATOR_BY_SQL_TYPE
 
 
@@ -32,6 +32,17 @@ def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], i
             f"'{import_config.schema}.{import_config.table}': "
             f"{', '.join(sorted(extra_columns))}."
         )
+
+    if import_config.mode == ImportMode.UPSERT:
+        key_columns_set = set(import_config.key_columns)
+        missing_key_columns = key_columns_set - sql_columns
+        if missing_key_columns:
+            errors.append(
+                f"Key columns are not present in target table "
+                f"'{import_config.schema}.{import_config.table}': "
+                f"{', '.join(sorted(missing_key_columns))}."
+            )
+
     if errors:
         raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
 
@@ -39,6 +50,26 @@ def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], i
 def validate_excel_data(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
     source_file = root / import_config.file
     df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine="openpyxl")
+
+    if import_config.mode == ImportMode.UPSERT:
+        for column in import_config.key_columns:
+            series = df[column]
+            if (count_na := series.isna().sum()) > 0:
+                raise ValueError(
+                    f"Import '{import_config.name}':\n"
+                    f"Key column '{column}' cannot contain NULL values for UPSERT, "
+                    f"but Excel contains {count_na} empty values."
+                )
+
+        duplicated_mask = df.duplicated(subset=import_config.key_columns, keep=False)
+        if duplicated_mask.any():
+            duplicate_rows = (df.index[duplicated_mask] + 2).tolist()
+            raise ValueError(
+                f"Import '{import_config.name}':\n"
+                f"Excel contains duplicate values for UPSERT key columns "
+                f"'{', '.join(import_config.key_columns)}'. "
+                f"Duplicate rows: {', '.join(str(row) for row in duplicate_rows)}."
+            )
 
     for column in sql_meta_columns:
         series = df[column.name]

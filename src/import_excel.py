@@ -11,50 +11,23 @@ from src.config_loader import read_imports
 from src.import_source_validators import validate_excel_sources, validate_import_sources
 from src.excel_data_validators import validate_excel_data, validate_target_columns
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
+from src.sql_data_import import write_dataframe, upsert_dataframe
 
-
-def quote_identifier(identifier: str) -> str:
-    return f"[{identifier.replace(']', ']]')}]"
-
-
-def normalize_row(row: tuple) -> tuple:
-    return tuple(None if pd.isna(value) else value for value in row)
-
-
+    
 def import_excel_data(
-        root: Path, 
-        conn: Connection, 
-        sql_meta_columns: list[SqlMetaColumn], 
-        import_config: ImportConfig
+    root: Path, 
+    conn: Connection, 
+    sql_meta_columns: list[SqlMetaColumn], 
+    import_config: ImportConfig
 ) -> None:
     source_file = root / import_config.file
     df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine="openpyxl")
     column_names = [column.name for column in sql_meta_columns]
-    df = df[column_names]
 
-    rows = df.shape[0]
-    target_table = (
-        f"{quote_identifier(import_config.schema)}."
-        f"{quote_identifier(import_config.table)}"
-    )
-
-    batch_size = 1000
-    delete_query = f"DELETE FROM {target_table}"
-    insert_query = f"""
-INSERT INTO {target_table}
-({', '.join(quote_identifier(name) for name in column_names)})
-VALUES({', '.join('?' for _ in range(len(column_names)))})"""
-    with conn.cursor() as cursor:
-        if import_config.mode == ImportMode.REPLACE:
-            cursor.execute(delete_query)
-        index = 0
-        while index < rows:
-            values = [
-                normalize_row(row) 
-                for row in df.iloc[index:index+batch_size].itertuples(index=False, name=None)
-            ]
-            cursor.executemany(insert_query, values)
-            index += batch_size
+    if import_config.mode == ImportMode.UPSERT:
+        upsert_dataframe(conn, df, column_names, import_config)
+    else:
+        write_dataframe(conn, df, column_names, import_config)
 
 
 def import_all_data(

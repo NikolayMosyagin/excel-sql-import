@@ -19,9 +19,19 @@
 #schema = "dbo"
 #table = "test_decimal"
 
+#[[imports]]
+#name = "e2e_test"
+#file = "data/e2e_import_test.xlsx"
+#sheet = "RollbackFailure"
+#schema = "dbo"
+#table = "ImportE2ETest"
+
+## test_upsert
 [[imports]]
-name = "e2e_test"
-file = "data/e2e_import_test.xlsx"
-sheet = "RollbackFailure"
+name = "test_upsert"
+file = "data/test_upsert.xlsx"
+sheet = "Upsert"
 schema = "dbo"
-table = "ImportE2ETest"
+table = "TestUpsert"
+mode = "upsert"
+key_columns = ["ID"]
