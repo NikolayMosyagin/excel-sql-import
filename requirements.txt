@@ -1,4 +1,5 @@
 pandas
 openpyxl
+xlrd
 python-dotenv
 mssql-python

@@ -74,6 +74,35 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
     write_mock.assert_not_called()
 
 
+def test_import_excel_data_uses_xlrd_for_xls(tmp_path: Path):
+    import_config = ImportConfig("config1", "test.xls", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("column1",))
+    sql_columns = [
+        SqlMetaColumn("column1", "nvarchar", 100, 0, 0, False),
+        SqlMetaColumn("column2", "int", 0, 0, 0, True),
+    ]
+
+    conn_mock = MagicMock()
+    df = pd.DataFrame({
+            "column2": [10],
+            "column1": ["value1"],
+    })
+    with (
+        patch("src.import_excel.pd.read_excel") as read_excel_mock,
+        patch("src.import_excel.upsert_dataframe") as upsert_mock,
+        patch("src.import_excel.write_dataframe") as write_mock,
+    ):
+        read_excel_mock.return_value = df
+        import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
+
+    read_excel_mock.assert_called_once_with(
+        tmp_path / "test.xls",
+        sheet_name="sheet1",
+        engine="xlrd"
+    )
+    upsert_mock.assert_called_once_with(conn_mock, df, ["column1", "column2"], import_config)
+    write_mock.assert_not_called()
+
+
 def test_import_all_data_commits_after_all_imports(tmp_path: Path):
     import_configs = [
         ImportConfig("config1", "file1.xlsx", "sheet1", "schema1", "table1"),

@@ -13,6 +13,7 @@ from src.import_source_validators import validate_excel_sources, validate_import
 from src.excel_data_validators import validate_excel_data, validate_target_columns
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
 from src.sql_data_import import write_dataframe, upsert_dataframe
+from src.excel_utils import get_excel_engine
 
 
 def get_root_path() -> Path:
@@ -29,7 +30,10 @@ def import_excel_data(
     import_config: ImportConfig
 ) -> None:
     source_file = root / import_config.file
-    df = pd.read_excel(source_file, sheet_name=import_config.sheet, engine="openpyxl")
+    df = pd.read_excel(
+        source_file, 
+        sheet_name=import_config.sheet, 
+        engine=get_excel_engine(source_file))
     column_names = [column.name for column in sql_meta_columns]
 
     if import_config.mode == ImportMode.UPSERT:
