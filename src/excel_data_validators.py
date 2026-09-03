@@ -1,26 +1,36 @@
 from pathlib import Path
 
-import pandas as pd
-
 from src.sql_meta_column import SqlMetaColumn
 from src.import_config import ImportConfig, ImportMode
-from src.excel_utils import get_excel_engine
+from src.excel_utils import read_excel_dataframe
 from src.value_validators import VALIDATOR_BY_SQL_TYPE
 
 
 def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
     source_file = root / import_config.file
-    df = pd.read_excel(
+    df = read_excel_dataframe(
         source_file, 
-        sheet_name=import_config.sheet,
-        nrows=0,
-        engine=get_excel_engine(source_file)
+        import_config.sheet, 
+        import_config.column_mapping,
+        nrows=0
     )
+
+    errors = []
+
+    duplicated_columns = sorted(
+        set(df.columns[df.columns.duplicated()].tolist())
+    )
+    if duplicated_columns:
+        errors.append(
+            f"Excel source contains duplicate column names after applying column mapping: "
+            f"{", ".join(duplicated_columns)}"
+        )
+        
     excel_columns = set(df.columns.to_list())
     sql_columns = set(column.name for column in sql_meta_columns)
     missing_columns = sql_columns - excel_columns
     extra_columns = excel_columns - sql_columns
-    errors = []
+
     if missing_columns:
         errors.append(
             f"Excel source is missing columns required by "
@@ -50,10 +60,12 @@ def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], i
 
 def validate_excel_data(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
     source_file = root / import_config.file
-    df = pd.read_excel(
-        source_file, 
-        sheet_name=import_config.sheet, 
-        engine=get_excel_engine(source_file))
+
+    df = read_excel_dataframe(
+        source_file,
+        import_config.sheet,
+        import_config.column_mapping
+    )
 
     if import_config.mode == ImportMode.UPSERT:
         for column in import_config.key_columns:

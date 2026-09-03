@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from collections.abc import Mapping
 from enum import Enum
 
 
@@ -17,6 +19,7 @@ class ImportConfig:
     table: str
     mode: ImportMode = ImportMode.REPLACE
     key_columns: tuple[str, ...] = ()
+    column_mapping: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._validate_attribute(self.name, 'name')
@@ -46,10 +49,25 @@ class ImportConfig:
                     raise ValueError(f"The attribute 'key_columns' must not contain duplicate column names.")
             case _:
                 raise ValueError(f"Validation rules are not defined for mode '{self.mode.value}'.")
-                
+
+        if not isinstance(self.column_mapping, Mapping):
+            raise TypeError("The attribute 'column_mapping' must be of type 'Mapping'.")
+
+        if any(not isinstance(value, str) for value in self.column_mapping):
+            raise TypeError("All keys of 'column_mapping' must be strings.")
+        if any(not isinstance(value, str) for value in self.column_mapping.values()):
+            raise TypeError("All values of 'column_mapping' must be strings.")
+        if any(key.strip() == "" or value.strip() == "" for key, value in self.column_mapping.items()):
+            raise ValueError("The attribute 'column_mapping' must contain only non-empty column names.")
+        if len(set(self.column_mapping.values())) != len(self.column_mapping):
+            raise ValueError(
+                "The attribute 'column_mapping' must not map multiple Excel columns "
+                "to the same SQL column."
+            )
+        object.__setattr__(self, "column_mapping", MappingProxyType(dict(self.column_mapping)))                
             
     def _validate_attribute(self, value: str, attribute_name: str) -> None:
         if not isinstance(value, str):
-            raise TypeError(f"The attribute '{attribute_name}' must have a type 'str'.")
+            raise TypeError(f"The attribute '{attribute_name}' must be of type 'str'.")
         if not value.strip():
-            raise ValueError(f"The attribute '{attribute_name}' should not be empty.")
+            raise ValueError(f"The attribute '{attribute_name}' must not be empty.")
