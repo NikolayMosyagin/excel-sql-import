@@ -20,6 +20,7 @@ class ImportConfig:
     mode: ImportMode = ImportMode.REPLACE
     key_columns: tuple[str, ...] = ()
     column_mapping: Mapping[str, str] = field(default_factory=dict)
+    date_formats: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._validate_attribute(self.name, 'name')
@@ -50,10 +51,25 @@ class ImportConfig:
             case _:
                 raise ValueError(f"Validation rules are not defined for mode '{self.mode.value}'.")
 
+        self._validate_column_mapping()
+        object.__setattr__(self, "column_mapping", MappingProxyType(dict(self.column_mapping)))  
+
+        self._validate_date_formats()
+        object.__setattr__(self, "date_formats", MappingProxyType(dict(self.date_formats)))              
+
+            
+    def _validate_attribute(self, value: str, attribute_name: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError(f"The attribute '{attribute_name}' must be of type 'str'.")
+        if not value.strip():
+            raise ValueError(f"The attribute '{attribute_name}' must not be empty.")
+
+
+    def _validate_column_mapping(self) -> None:
         if not isinstance(self.column_mapping, Mapping):
             raise TypeError("The attribute 'column_mapping' must be of type 'Mapping'.")
 
-        if any(not isinstance(value, str) for value in self.column_mapping):
+        if any(not isinstance(key, str) for key in self.column_mapping):
             raise TypeError("All keys of 'column_mapping' must be strings.")
         if any(not isinstance(value, str) for value in self.column_mapping.values()):
             raise TypeError("All values of 'column_mapping' must be strings.")
@@ -64,10 +80,17 @@ class ImportConfig:
                 "The attribute 'column_mapping' must not map multiple Excel columns "
                 "to the same SQL column."
             )
-        object.__setattr__(self, "column_mapping", MappingProxyType(dict(self.column_mapping)))                
-            
-    def _validate_attribute(self, value: str, attribute_name: str) -> None:
-        if not isinstance(value, str):
-            raise TypeError(f"The attribute '{attribute_name}' must be of type 'str'.")
-        if not value.strip():
-            raise ValueError(f"The attribute '{attribute_name}' must not be empty.")
+
+
+    def _validate_date_formats(self) -> None:
+        if not isinstance(self.date_formats, Mapping):
+            raise TypeError("The attribute 'date_formats' must be of type 'Mapping'.")
+
+        if any(not isinstance(key, str) for key in self.date_formats):
+            raise TypeError("All keys of 'date_formats' must be strings.")
+        if any(not isinstance(value, str) for value in self.date_formats.values()):
+            raise TypeError("All values of 'date_formats' must be strings.")
+        if any(key.strip() == "" for key in self.date_formats):
+            raise ValueError("The attribute 'date_formats' must contain only non-empty column names.")
+        if any(value.strip() == "" for value in self.date_formats.values()):
+            raise ValueError("The attribute 'date_formats' must contain only non-empty formats.")

@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,31 +18,41 @@ from src.import_config import ImportConfig, ImportMode
     [ImportMode.REPLACE, ImportMode.APPEND]
 )
 def test_import_excel_data_uses_write_dataframe_for_non_upsert_mode(tmp_path: Path, mode: ImportMode):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", mode)
+    import_config = ImportConfig(
+        "config1", 
+        "test.xlsx", 
+        "sheet1", 
+        "schema1", 
+        "table1", 
+        mode,
+        column_mapping={"Дата": "ReportDate"},
+        date_formats={"ReportDate": "%d.%m.%Y"}
+    )
     sql_columns = [
         SqlMetaColumn("column1", "nvarchar", 100, 0, 0, False),
-        SqlMetaColumn("column2", "int", 0, 0, 0, True),
+        SqlMetaColumn("ReportDate", "date", 0, 0, 0, True),
     ]
 
     conn_mock = MagicMock()
     df = pd.DataFrame({
-            "column2": [10],
+            "ReportDate": [datetime(1994, 5, 31)],
             "column1": ["value1"],
     })
     with (
-        patch("src.import_excel.pd.read_excel") as read_excel_mock,
+        patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
         patch("src.import_excel.write_dataframe") as write_mock,
     ):
-        read_excel_mock.return_value = df
+        prepare_excel_mock.return_value = df
         import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
 
-    read_excel_mock.assert_called_once_with(
+    prepare_excel_mock.assert_called_once_with(
         tmp_path / "test.xlsx",
-        sheet_name="sheet1",
-        engine="openpyxl"
+        import_config.sheet,
+        import_config.column_mapping,
+        import_config.date_formats
     )
-    write_mock.assert_called_once_with(conn_mock, df, ["column1", "column2"], import_config)
+    write_mock.assert_called_once_with(conn_mock, df, ["column1", "ReportDate"], import_config)
     upsert_mock.assert_not_called()
 
 
@@ -58,46 +69,18 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
             "column1": ["value1"],
     })
     with (
-        patch("src.import_excel.pd.read_excel") as read_excel_mock,
+        patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
         patch("src.import_excel.write_dataframe") as write_mock,
     ):
-        read_excel_mock.return_value = df
+        prepare_excel_mock.return_value = df
         import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
 
-    read_excel_mock.assert_called_once_with(
+    prepare_excel_mock.assert_called_once_with(
         tmp_path / "test.xlsx",
-        sheet_name="sheet1",
-        engine="openpyxl"
-    )
-    upsert_mock.assert_called_once_with(conn_mock, df, ["column1", "column2"], import_config)
-    write_mock.assert_not_called()
-
-
-def test_import_excel_data_uses_xlrd_for_xls(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xls", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("column1",))
-    sql_columns = [
-        SqlMetaColumn("column1", "nvarchar", 100, 0, 0, False),
-        SqlMetaColumn("column2", "int", 0, 0, 0, True),
-    ]
-
-    conn_mock = MagicMock()
-    df = pd.DataFrame({
-            "column2": [10],
-            "column1": ["value1"],
-    })
-    with (
-        patch("src.import_excel.pd.read_excel") as read_excel_mock,
-        patch("src.import_excel.upsert_dataframe") as upsert_mock,
-        patch("src.import_excel.write_dataframe") as write_mock,
-    ):
-        read_excel_mock.return_value = df
-        import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
-
-    read_excel_mock.assert_called_once_with(
-        tmp_path / "test.xls",
-        sheet_name="sheet1",
-        engine="xlrd"
+        import_config.sheet,
+        import_config.column_mapping,
+        import_config.date_formats
     )
     upsert_mock.assert_called_once_with(conn_mock, df, ["column1", "column2"], import_config)
     write_mock.assert_not_called()

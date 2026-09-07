@@ -1,9 +1,110 @@
 from pathlib import Path
+from collections.abc import Mapping
 
+import pandas as pd
 from src.sql_meta_column import SqlMetaColumn
 from src.import_config import ImportConfig, ImportMode
-from src.excel_utils import read_excel_dataframe
+from src.excel_utils import read_excel_dataframe, prepare_excel_dataframe
 from src.value_validators import VALIDATOR_BY_SQL_TYPE
+
+DATE_SQL_TYPES = {
+        "date",
+        "smalldatetime",
+        "datetime",
+        "datetime2",
+}
+
+def validate_excel_columns(
+    df: pd.DataFrame,
+    sql_columns: set[str],
+    table_name: str
+) -> list[str]:
+    errors = []
+
+    duplicated_columns = sorted(
+        set(df.columns[df.columns.duplicated()].tolist())
+    )
+    if duplicated_columns:
+        errors.append(
+            f"Excel source contains duplicate column names after applying column mapping: "
+            f"{", ".join(duplicated_columns)}"
+        )
+
+    excel_columns = set(df.columns.to_list())
+    missing_columns = sql_columns - excel_columns
+    extra_columns = excel_columns - sql_columns
+
+    if missing_columns:
+        errors.append(
+            f"Excel source is missing columns required by "
+            f"'{table_name}': "
+            f"{', '.join(sorted(missing_columns))}."
+        )
+    if extra_columns:
+        errors.append(
+            f"Excel source contains columns not present in "
+            f"'{table_name}': "
+            f"{', '.join(sorted(extra_columns))}."
+        )
+    return errors
+
+
+def validate_date_format_columns(
+    excel_columns: set[str],
+    sql_meta_columns: list[SqlMetaColumn],
+    date_formats: Mapping[str, str]
+) -> list[str]:
+
+    errors = []
+    missing_date_format_columns = sorted(
+        column_name 
+        for column_name in date_formats
+        if column_name not in excel_columns
+    )
+    if missing_date_format_columns:
+        errors.append(
+            f"Columns from 'date_formats' are not present in Excel "
+            f"after applying column mapping: "
+            f"{', '.join(missing_date_format_columns)}."
+        )
+
+    invalid_date_format_columns = []
+    for column_name in date_formats:
+        sql_column = next((value for value in sql_meta_columns if value.name == column_name), None)
+        if sql_column is None or sql_column.type_name in DATE_SQL_TYPES:
+            continue
+
+        invalid_date_format_columns.append(
+            f"{sql_column.name} ({sql_column.type_name})"
+        )
+
+    if invalid_date_format_columns:
+        errors.append(
+            f"'date_formats' can only be used for SQL date/time columns, but got: "
+            f"{", ".join(invalid_date_format_columns)}."
+        )
+    return errors
+
+
+def validate_upsert_key_columns(
+    import_config: ImportConfig,
+    sql_columns: set[str]
+) -> list[str]:
+    
+    errors = []
+    if import_config.mode != ImportMode.UPSERT:
+        return errors
+
+    key_columns_set = set(import_config.key_columns)
+    missing_key_columns = key_columns_set - sql_columns
+    if missing_key_columns:
+        errors.append(
+            f"Key columns are not present in target table "
+            f"'{import_config.schema}.{import_config.table}': "
+            f"{', '.join(sorted(missing_key_columns))}."
+        )
+
+    return errors
 
 
 def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
@@ -17,54 +118,43 @@ def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], i
 
     errors = []
 
-    duplicated_columns = sorted(
-        set(df.columns[df.columns.duplicated()].tolist())
-    )
-    if duplicated_columns:
-        errors.append(
-            f"Excel source contains duplicate column names after applying column mapping: "
-            f"{", ".join(duplicated_columns)}"
-        )
-        
-    excel_columns = set(df.columns.to_list())
     sql_columns = set(column.name for column in sql_meta_columns)
-    missing_columns = sql_columns - excel_columns
-    extra_columns = excel_columns - sql_columns
 
-    if missing_columns:
-        errors.append(
-            f"Excel source is missing columns required by "
-            f"'{import_config.schema}.{import_config.table}': "
-            f"{', '.join(sorted(missing_columns))}."
+    errors.extend(
+        validate_excel_columns(
+            df,
+            sql_columns,
+            f"{import_config.schema}.{import_config.table}"
         )
-    if extra_columns:
-        errors.append(
-            f"Excel source contains columns not present in "
-            f"'{import_config.schema}.{import_config.table}': "
-            f"{', '.join(sorted(extra_columns))}."
-        )
+    )
 
-    if import_config.mode == ImportMode.UPSERT:
-        key_columns_set = set(import_config.key_columns)
-        missing_key_columns = key_columns_set - sql_columns
-        if missing_key_columns:
-            errors.append(
-                f"Key columns are not present in target table "
-                f"'{import_config.schema}.{import_config.table}': "
-                f"{', '.join(sorted(missing_key_columns))}."
-            )
+    errors.extend(
+        validate_date_format_columns(
+            set(df.columns),
+            sql_meta_columns,
+            import_config.date_formats
+        )
+    )
+
+    errors.extend(
+        validate_upsert_key_columns(
+            import_config,
+            sql_columns,
+        )
+    )
 
     if errors:
         raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
-
+    
 
 def validate_excel_data(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
     source_file = root / import_config.file
 
-    df = read_excel_dataframe(
-        source_file,
+    df = prepare_excel_dataframe(
+        source_file, 
         import_config.sheet,
-        import_config.column_mapping
+        import_config.column_mapping,
+        import_config.date_formats
     )
 
     if import_config.mode == ImportMode.UPSERT:

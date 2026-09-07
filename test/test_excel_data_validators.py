@@ -1,11 +1,18 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
 from src.import_config import ImportConfig, ImportMode
 from src.sql_meta_column import SqlMetaColumn
-from src.excel_data_validators import validate_target_columns, validate_excel_data
+from src.excel_data_validators import (
+    validate_excel_columns,
+    validate_upsert_key_columns,
+    validate_date_format_columns,
+    validate_target_columns, 
+    validate_excel_data,
+)
 
 
 @pytest.fixture
@@ -21,115 +28,327 @@ def import_config() -> ImportConfig:
     return ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1")
 
 
-def test_validate_target_columns_reject_missing_column(
-    tmp_path: Path,
-    sql_columns: list[SqlMetaColumn],
-    import_config: ImportConfig
-):
-    data = {
-        "name1": [1, 2],
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    with pytest.raises(ValueError, match="Excel source is missing columns required"):
-        validate_target_columns(tmp_path, sql_columns, import_config)
+def test_validate_excel_columns_reject_missing_column():
+    df = pd.DataFrame({
+        "name1": [1, 2]
+    })
+    errors = validate_excel_columns(
+        df, 
+        {"name1", "name2"}, 
+        "schema1.table1"
+    )
+    assert len(errors) == 1
+    assert "Excel source is missing columns required by" in errors[0]
+    assert "name2" in errors[0]
 
 
-def test_validate_target_columns_reject_extra_column(
-    tmp_path: Path,
-    sql_columns: list[SqlMetaColumn],
-    import_config: ImportConfig
-):
-    data = {
+def test_validate_excel_columns_reject_extra_column():
+    df = pd.DataFrame({
         "name1": [1, 2],
         "name2": [1, 2],
         "name3": [1, 3]
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    with pytest.raises(ValueError, match="Excel source contains columns not present in"):
-        validate_target_columns(tmp_path, sql_columns, import_config)
+    })
+    errors = validate_excel_columns(
+        df,
+        {"name1", "name2"},
+        "schema1.table1"
+    )
+    assert len(errors) == 1
+    assert "Excel source contains columns not present in" in errors[0]
+    assert "name3" in errors[0]
 
 
-def test_validate_target_columns_reject_extra_and_missing_column(
-    tmp_path: Path,
-    sql_columns: list[SqlMetaColumn],
-    import_config: ImportConfig
-):
-    data = {
+def test_validate_excel_columns_reject_extra_and_missing_column():
+    df = pd.DataFrame({
         "name1": [1, 2],
         "name_2": [1, 2],
+    })
+    errors = validate_excel_columns(
+        df,
+        {"name1", "name2"},
+        "schema1.table1"
+    )
+
+    assert len(errors) == 2
+    assert "Excel source is missing columns required" in errors[0]
+    assert "name2" in errors[0]
+    assert "Excel source contains columns not present" in errors[1]
+    assert "name_2" in errors[1]
+
+
+def test_validate_excel_columns_reject_duplicate_column_names():
+    df = pd.DataFrame({
+        "name1": [1, 2],
+        "name2": [1, 10]
+    })
+    df = df.rename(columns={"name2": "name1"})
+
+    errors = validate_excel_columns(
+        df,
+        {"name1", "name2"},
+        "schema1.table1"
+    )
+
+    assert len(errors) == 2
+    assert "Excel source contains duplicate column names after applying column mapping:" in errors[0]
+    assert "name1" in errors[0]
+    assert "Excel source is missing columns required" in errors[1]
+    assert "name2" in errors[1]
+
+
+def test_validate_excel_columns_accept_valid_data():
+    df = pd.DataFrame({
+        "name2": [1, 2],
+        "name1": [1, 2],
+    })
+    errors = validate_excel_columns(
+        df,
+        {"name1", "name2"},
+        "schema1.table1"
+    )
+    assert len(errors) == 0
+
+
+def test_validate_date_format_columns_accepts_valid_date_column():
+    excel_columns = {"Column1", "ColumnDate"}
+    sql_meta_columns = [
+        SqlMetaColumn("Column1", "int", 0, 0, 0, False),
+        SqlMetaColumn("ColumnDate", "date", 0, 0, 0, False)
+    ]
+    date_formats = {
+        "ColumnDate": "%d.%m.%Y"
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    with pytest.raises(ValueError) as exc_info:
-        validate_target_columns(tmp_path, sql_columns, import_config)
-
-    error_message = str(exc_info.value)
-
-    assert "Excel source is missing columns required" in error_message
-    assert "Excel source contains columns not present" in error_message
+    errors = validate_date_format_columns(
+        excel_columns,
+        sql_meta_columns,
+        date_formats
+    )
+    assert len(errors) == 0
 
 
-def test_validate_target_columns_accept_valid_data(
+def test_validate_date_format_columns_rejects_missing_column():
+    excel_columns = {"Column1", "ColumnDate"}
+    sql_meta_columns = [
+        SqlMetaColumn("Column1", "int", 0, 0, 0, False),
+        SqlMetaColumn("ColumnDate", "date", 0, 0, 0, False)
+    ]
+    date_formats = {
+        "ColumnDatE": "%d.%m.%Y"
+    }
+    errors = validate_date_format_columns(
+        excel_columns,
+        sql_meta_columns,
+        date_formats
+    )
+    assert len(errors) == 1
+    assert "Columns from 'date_formats' are not present in Excel" in errors[0]
+
+
+@pytest.mark.parametrize(
+    "sql_column_type",
+    ["int", "nvarchar", "decimal"]
+)
+def test_validate_date_format_columns_rejects_invalid_type(sql_column_type: str):
+    excel_columns = {"Column1", "ColumnDate"}
+    sql_meta_columns = [
+        SqlMetaColumn("Column1", "int", 0, 0, 0, False),
+        SqlMetaColumn("ColumnDate", sql_column_type, 0, 0, 0, False)
+    ]
+    date_formats = {
+        "ColumnDate": "%d.%m.%Y"
+    }
+    errors = validate_date_format_columns(
+        excel_columns,
+        sql_meta_columns,
+        date_formats
+    )
+    assert len(errors) == 1
+    assert "date_formats' can only be used for SQL date/time columns, but got:" in errors[0]
+    assert sql_column_type in errors[0]
+    assert "ColumnDate" in errors[0]
+
+
+@pytest.mark.parametrize(
+    "sql_column_type",
+    ["date", "datetime", "datetime2", "smalldatetime"]
+)
+def test_validate_date_format_columns_accepts_valid_date_type(sql_column_type: str):
+    excel_columns = {"Column1", "ColumnDate"}
+    sql_meta_columns = [
+        SqlMetaColumn("Column1", "int", 0, 0, 0, False),
+        SqlMetaColumn("ColumnDate", sql_column_type, 0, 0, 0, False)
+    ]
+    date_formats = {
+        "ColumnDate": "%d.%m.%Y"
+    }
+    errors = validate_date_format_columns(
+        excel_columns,
+        sql_meta_columns,
+        date_formats
+    )
+    assert len(errors) == 0
+
+
+def test_validate_date_format_columns_multiple_errors():
+    excel_columns = {"Column1", "ColumnDate"}
+    sql_meta_columns = [
+        SqlMetaColumn("Column1", "int", 0, 0, 0, False),
+        SqlMetaColumn("ColumnDate", "date", 0, 0, 0, False)
+    ]
+    date_formats = {
+        "ColumnDatE": "%d.%m.%Y",
+        "Column1": "%d.%m.%Y"
+    }
+    errors = validate_date_format_columns(
+        excel_columns,
+        sql_meta_columns,
+        date_formats
+    )
+    assert len(errors) == 2
+    assert "Columns from 'date_formats' are not present in Excel" in errors[0]
+    assert "ColumnDatE" in errors[0]
+    assert "'date_formats' can only be used for SQL date/time columns, but got:" in errors[1]
+    assert "Column1 (int)" in errors[1]
+
+def test_validate_upsert_key_columns_accept_with_one_key():
+    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",))
+    errors = validate_upsert_key_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 0
+
+
+def test_validate_upsert_key_columns_ignores_non_upsert_mode():
+    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1")
+    errors = validate_upsert_key_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 0
+
+
+def test_validate_upsert_key_columns_accept_with_multiple_keys():
+    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2"))
+    errors = validate_upsert_key_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 0
+
+
+def test_validate_upsert_key_columns_reject_missing_key_column():
+    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "test"))
+    errors = validate_upsert_key_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 1
+    assert "Key columns are not present in target table 'schema1.table1': test." == errors[0]
+
+
+def test_validate_upsert_key_columns_reject_missing_key_columns():
+    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "test", "test2"))
+    errors = validate_upsert_key_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 1
+    assert "Key columns are not present in target table 'schema1.table1': test, test2." == errors[0]
+
+
+def test_validate_target_columns_accepts_when_all_validators_return_no_errors(
     tmp_path: Path,
     sql_columns: list[SqlMetaColumn],
     import_config: ImportConfig
 ):
-    data = {
-        "name2": [1, 2],
+    df = pd.DataFrame({
         "name1": [1, 2],
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    validate_target_columns(tmp_path, sql_columns, import_config)
-
-
-def test_validate_target_columns_accept_upsert_with_one_key(tmp_path: Path, sql_columns: list[SqlMetaColumn]):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",))
-    data = {
-        "name2": [1, 2],
-        "name1": [1, 2],
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    validate_target_columns(tmp_path, sql_columns, import_config)
-
-
-def test_validate_target_columns_accept_upsert_with_multiple_keys(tmp_path: Path, sql_columns: list[SqlMetaColumn]):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2"))
-    data = {
-        "name2": [1, 2],
-        "name1": [1, 2],
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    validate_target_columns(tmp_path, sql_columns, import_config)
-
-
-def test_validate_target_columns_reject_missing_key_column(tmp_path: Path, sql_columns: list[SqlMetaColumn]):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "test"))
-    data = {
-        "name2": [1, 2],
-        "name1": [1, 2],
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    with pytest.raises(ValueError, match="Key columns are not present in target table 'schema1.table1': test"):
+        "name2": [10, 20]
+    })
+    with (
+        patch("src.excel_data_validators.read_excel_dataframe") as read_excel_mock,
+        patch("src.excel_data_validators.validate_excel_columns") as excel_columns_mock,
+        patch("src.excel_data_validators.validate_date_format_columns") as date_formats_mock,
+        patch("src.excel_data_validators.validate_upsert_key_columns") as upsert_key_mock,
+    ):
+        read_excel_mock.return_value = df
+        excel_columns_mock.return_value = []
+        date_formats_mock.return_value = []
+        upsert_key_mock.return_value = []
         validate_target_columns(tmp_path, sql_columns, import_config)
 
+    read_excel_mock.assert_called_once_with(
+        tmp_path / import_config.file,
+        import_config.sheet,
+        import_config.column_mapping,
+        nrows=0
+    )
+    excel_columns_mock.assert_called_once_with(
+        df,
+        {column.name for column in sql_columns},
+        f"{import_config.schema}.{import_config.table}"
+    )
+    date_formats_mock.assert_called_once_with(
+        set(df.columns),
+        sql_columns,
+        import_config.date_formats
+    )
+    upsert_key_mock.assert_called_once_with(
+        import_config,
+        {column.name for column in sql_columns}
+    )
 
-def test_validate_target_columns_reject_missing_key_columns(tmp_path: Path, sql_columns: list[SqlMetaColumn]):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "test", "test2"))
-    data = {
-        "name2": [1, 2],
+
+def test_validate_target_columns_aggregates_errors_from_all_validators(
+    tmp_path: Path,
+    sql_columns: list[SqlMetaColumn],
+    import_config: ImportConfig
+):
+    df = pd.DataFrame({
         "name1": [1, 2],
-    }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    with pytest.raises(ValueError, match="Key columns are not present in target table 'schema1.table1': test, test2"):
-        validate_target_columns(tmp_path, sql_columns, import_config)
+        "name_2": [10, 20]
+    })
+    with (
+        patch("src.excel_data_validators.read_excel_dataframe") as read_excel_mock,
+        patch("src.excel_data_validators.validate_excel_columns") as excel_columns_mock,
+        patch("src.excel_data_validators.validate_date_format_columns") as date_formats_mock,
+        patch("src.excel_data_validators.validate_upsert_key_columns") as upsert_key_mock,
+    ):
+        read_excel_mock.return_value = df
+        excel_columns_mock.return_value = ["Excel columns error"]
+        date_formats_mock.return_value = ["Date formats error"]
+        upsert_key_mock.return_value = ["Upsert key error"]
 
+        with pytest.raises(ValueError) as exc_info:
+            validate_target_columns(tmp_path, sql_columns, import_config)
+    
+    read_excel_mock.assert_called_once_with(
+        tmp_path / import_config.file,
+        import_config.sheet,
+        import_config.column_mapping,
+        nrows=0
+    )
+    excel_columns_mock.assert_called_once_with(
+        df,
+        {column.name for column in sql_columns},
+        f"{import_config.schema}.{import_config.table}"
+    )
+    date_formats_mock.assert_called_once_with(
+        set(df.columns),
+        sql_columns,
+        import_config.date_formats
+    )
+    upsert_key_mock.assert_called_once_with(
+        import_config,
+        {column.name for column in sql_columns}
+    )
+    error_message = str(exc_info.value)
+    assert "Import 'config1':" in error_message
+    assert "Excel columns error" in error_message
+    assert "Date formats error" in error_message
+    assert "Upsert key error" in error_message
+    
 
 def test_validate_excel_data_reject_null_in_non_nullable_column(
     tmp_path: Path,

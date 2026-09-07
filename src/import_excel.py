@@ -12,7 +12,7 @@ from src.import_source_validators import validate_excel_sources, validate_import
 from src.excel_data_validators import validate_excel_data, validate_target_columns
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
 from src.sql_data_import import write_dataframe, upsert_dataframe
-from src.excel_utils import read_excel_dataframe
+from src.excel_utils import prepare_excel_dataframe
 
 
 def get_root_path() -> Path:
@@ -30,10 +30,11 @@ def import_excel_data(
 ) -> None:
     source_file = root / import_config.file
 
-    df = read_excel_dataframe(
+    df = prepare_excel_dataframe(
         source_file,
         import_config.sheet,
-        import_config.column_mapping
+        import_config.column_mapping,
+        import_config.date_formats
     )
 
     column_names = [column.name for column in sql_meta_columns]

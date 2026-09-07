@@ -16,3 +16,18 @@ schema = "dbo"
 table = "Products"
 mode = "upsert"
 key_columns = ["ID"]
+
+[[imports]]
+name = "product_stocks"
+file = "data/test.xls"
+sheet = "Sheet1"
+schema = "dbo"
+table = "ProductStocks"
+mode = "append"
+
+[imports.column_mapping]
+"Столбец Excel 1" = "NewValue1"
+"Столбец Excel 2" = "NewValue2"
+
+[imports.date_formats]
+ColumnNameDate = "%d.%m.%Y"
