@@ -4,13 +4,12 @@ import tomllib
 from src.import_config import ImportConfig, ImportMode
 
 
-def read_imports(root: Path) -> list[ImportConfig]:
-    imports_path = root / 'config' / 'imports.toml'
+def read_imports(config_path: Path) -> list[ImportConfig]:
     IMPORTS_KEY = 'imports'
-    if not imports_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: '{imports_path}'.")
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: '{config_path}'.")
     
-    with open(imports_path, "rb") as imports_file:
+    with open(config_path, "rb") as imports_file:
         data = tomllib.load(imports_file)
 
     if IMPORTS_KEY not in data:

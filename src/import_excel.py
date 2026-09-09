@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import os
 import sys
@@ -13,6 +14,7 @@ from src.excel_data_validators import validate_excel_data, validate_target_colum
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
 from src.sql_data_import import write_dataframe, upsert_dataframe
 from src.excel_utils import prepare_excel_dataframe
+from src.path_utils import resolve_path
 
 
 def get_root_path() -> Path:
@@ -21,15 +23,45 @@ def get_root_path() -> Path:
 
     return Path(__file__).resolve().parents[1]
 
+
+def get_config_path(
+    config: str | None,
+    app_dir: Path,
+    current_dir: Path
+) -> Path:
+    return (
+        resolve_path(config, current_dir) 
+        if config is not None 
+        else app_dir / "config" / "imports.toml"
+    )
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Import Excel data into SQL Server using a TOML configuration file."
+    )
+    parser.add_argument(
+        "-c", 
+        "--config",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to the TOML configuration file. "
+            "Relative paths are resolved from the current working directory. "
+            "If omitted, 'config/imports.toml' in the application directory is used."
+        )
+    )
+    return parser.parse_args(argv)
+
     
 def import_excel_data(
-    root: Path, 
+    source_file: Path, 
     conn: Connection, 
     sql_meta_columns: list[SqlMetaColumn], 
     import_config: ImportConfig
 ) -> None:
-    source_file = root / import_config.file
-
+    
     df = prepare_excel_dataframe(
         source_file,
         import_config.sheet,
@@ -46,14 +78,15 @@ def import_excel_data(
 
 
 def import_all_data(
-    root: Path,
+    base_dir: Path,
     conn: Connection, 
     import_configs: list[ImportConfig],
     sql_columns: list[list[SqlMetaColumn]]
 ) -> None:
     try:
         for import_config, sql_column in zip(import_configs, sql_columns, strict=True):
-            import_excel_data(root, conn, sql_column, import_config)
+            source_file = resolve_path(import_config.file, base_dir)
+            import_excel_data(source_file, conn, sql_column, import_config)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -61,11 +94,14 @@ def import_all_data(
 
 
 def main():
-    root_path = get_root_path()
-    load_dotenv(root_path / ".env")
-    import_configs = read_imports(root_path)
-    validate_import_sources(root_path, import_configs)
-    validate_excel_sources(root_path, import_configs)
+    args = parse_args()
+    app_dir = get_root_path()
+    load_dotenv(app_dir / ".env")
+    config_path = get_config_path(args.config, app_dir, Path.cwd())
+    import_configs = read_imports(config_path)
+    config_dir = config_path.parent
+    validate_import_sources(config_dir, import_configs)
+    validate_excel_sources(config_dir, import_configs)
     sql_connection_string = os.getenv("SQL_CONNECTION_STRING")
     if sql_connection_string is None or sql_connection_string.strip() == "":
         raise ValueError("Required environment variable 'SQL_CONNECTION_STRING' is not set or is empty.")
@@ -74,10 +110,11 @@ def main():
         validate_target_tables(conn, import_configs)
         sql_columns = get_sql_meta_columns(conn, import_configs)
         for import_config, sql_column in zip(import_configs, sql_columns, strict=True):
-            validate_target_columns(root_path, sql_column, import_config)
-            validate_excel_data(root_path, sql_column, import_config)
+            source_file = resolve_path(import_config.file, config_dir)
+            validate_target_columns(source_file, sql_column, import_config)
+            validate_excel_data(source_file, sql_column, import_config)
 
-        import_all_data(root_path, conn, import_configs, sql_columns)
+        import_all_data(config_dir, conn, import_configs, sql_columns)
   
     print("Done!")
 

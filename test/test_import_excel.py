@@ -8,7 +8,9 @@ import pytest
 from src.sql_meta_column import SqlMetaColumn
 from src.import_excel import (
     import_excel_data,
-    import_all_data
+    import_all_data,
+    get_config_path,
+    parse_args
 )
 from src.import_config import ImportConfig, ImportMode
 
@@ -38,16 +40,17 @@ def test_import_excel_data_uses_write_dataframe_for_non_upsert_mode(tmp_path: Pa
             "ReportDate": [datetime(1994, 5, 31)],
             "column1": ["value1"],
     })
+    data_file = tmp_path / import_config.file
     with (
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
         patch("src.import_excel.write_dataframe") as write_mock,
     ):
         prepare_excel_mock.return_value = df
-        import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
+        import_excel_data(data_file, conn_mock, sql_columns, import_config)
 
     prepare_excel_mock.assert_called_once_with(
-        tmp_path / "test.xlsx",
+        data_file,
         import_config.sheet,
         import_config.column_mapping,
         import_config.date_formats
@@ -68,16 +71,17 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
             "column2": [10],
             "column1": ["value1"],
     })
+    data_file = tmp_path / import_config.file
     with (
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
         patch("src.import_excel.write_dataframe") as write_mock,
     ):
         prepare_excel_mock.return_value = df
-        import_excel_data(tmp_path, conn_mock, sql_columns, import_config)
+        import_excel_data(data_file, conn_mock, sql_columns, import_config)
 
     prepare_excel_mock.assert_called_once_with(
-        tmp_path / "test.xlsx",
+        data_file,
         import_config.sheet,
         import_config.column_mapping,
         import_config.date_formats
@@ -104,13 +108,13 @@ def test_import_all_data_commits_after_all_imports(tmp_path: Path):
 
     assert import_mock.call_count == 2
     assert import_mock.call_args_list[0].args == (
-        tmp_path,
+        tmp_path / import_configs[0].file,
         conn_mock,
         sql_columns[0],
         import_configs[0]
     )
     assert import_mock.call_args_list[1].args == (
-        tmp_path,
+        tmp_path / import_configs[1].file,
         conn_mock,
         sql_columns[1],
         import_configs[1]
@@ -141,13 +145,13 @@ def test_import_all_data_rolls_back_when_import_fails(tmp_path: Path):
 
     assert import_mock.call_count == 2
     assert import_mock.call_args_list[0].args == (
-        tmp_path,
+        tmp_path / import_configs[0].file,
         conn_mock,
         sql_columns[0],
         import_configs[0]
     )
     assert import_mock.call_args_list[1].args == (
-        tmp_path,
+        tmp_path / import_configs[1].file,
         conn_mock,
         sql_columns[1],
         import_configs[1]
@@ -173,10 +177,52 @@ def test_import_all_data_rolls_back_when_input_lengths_mismatch(tmp_path: Path):
             import_all_data(tmp_path, conn_mock, import_configs, sql_columns)
 
     import_mock.assert_called_once_with(
-        tmp_path,
+        tmp_path / import_configs[0].file,
         conn_mock,
         sql_columns[0],
         import_configs[0]
     )      
     conn_mock.commit.assert_not_called()
     conn_mock.rollback.assert_called_once()
+
+
+def test_parse_args_returns_none_when_config_not_specified():
+    result = parse_args([])
+    assert result.config is None
+
+
+def test_parse_args_accepts_long_config_argument():
+    result = parse_args(["--config", "imports.toml"])
+    assert result.config == "imports.toml"
+
+
+def test_parse_args_accepts_short_config_argument():
+    result = parse_args(["-c", "imports.toml"])
+    assert result.config == "imports.toml"
+
+
+def test_parse_args_rejects_config_without_value():
+    with pytest.raises(SystemExit):
+        parse_args(["--config"])
+
+
+def test_get_config_path_uses_default_config(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    cur_dir = tmp_path / "cur"
+    result = get_config_path(None, app_dir, cur_dir)
+    assert result == app_dir / "config" / "imports.toml"
+
+
+def test_get_config_path_resolves_relative_config_from_current_dir(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    cur_dir = tmp_path / "cur"
+    result = get_config_path("imports.toml", app_dir, cur_dir)
+    assert result == cur_dir / "imports.toml"
+
+
+def test_get_config_path_keeps_absolute_config_path(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    cur_dir = tmp_path / "cur"
+    config_path = tmp_path / "imports.toml"
+    result = get_config_path(str(config_path), app_dir, cur_dir)
+    assert result == config_path

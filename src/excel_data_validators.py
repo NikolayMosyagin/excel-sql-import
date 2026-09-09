@@ -2,10 +2,12 @@ from pathlib import Path
 from collections.abc import Mapping
 
 import pandas as pd
+
 from src.sql_meta_column import SqlMetaColumn
 from src.import_config import ImportConfig, ImportMode
 from src.excel_utils import read_excel_dataframe, prepare_excel_dataframe
 from src.value_validators import VALIDATOR_BY_SQL_TYPE
+
 
 DATE_SQL_TYPES = {
         "date",
@@ -107,8 +109,12 @@ def validate_upsert_key_columns(
     return errors
 
 
-def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
-    source_file = root / import_config.file
+def validate_target_columns(
+    source_file: Path, 
+    sql_meta_columns: list[SqlMetaColumn], 
+    import_config: ImportConfig
+) -> None:
+
     df = read_excel_dataframe(
         source_file, 
         import_config.sheet, 
@@ -147,8 +153,11 @@ def validate_target_columns(root: Path, sql_meta_columns: list[SqlMetaColumn], i
         raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
     
 
-def validate_excel_data(root: Path, sql_meta_columns: list[SqlMetaColumn], import_config: ImportConfig) -> None:
-    source_file = root / import_config.file
+def validate_excel_data(
+    source_file: Path,
+    sql_meta_columns: list[SqlMetaColumn],
+    import_config: ImportConfig
+) -> None:
 
     df = prepare_excel_dataframe(
         source_file, 
