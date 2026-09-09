@@ -1,9 +1,10 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
+from src.import_task import ImportTask
 from src.import_config import ImportConfig, ImportMode
 from src.sql_meta_column import SqlMetaColumn
 from src.excel_data_validators import (
@@ -26,6 +27,15 @@ def sql_columns() -> list[SqlMetaColumn]:
 @pytest.fixture
 def import_config() -> ImportConfig:
     return ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1")
+
+
+@pytest.fixture
+def import_task(tmp_path: Path, import_config: ImportConfig) -> ImportTask:
+    return ImportTask(
+        import_config,
+        tmp_path / f"source_{import_config.file}",
+        tmp_path / f"working_{import_config.file}",
+    )
 
 
 @pytest.fixture
@@ -263,9 +273,8 @@ def test_validate_upsert_key_columns_reject_missing_key_columns():
 
 
 def test_validate_target_columns_accepts_when_all_validators_return_no_errors(
-    config_path: Path,
     sql_columns: list[SqlMetaColumn],
-    import_config: ImportConfig
+    import_task: ImportTask
 ):
     df = pd.DataFrame({
         "name1": [1, 2],
@@ -281,34 +290,33 @@ def test_validate_target_columns_accepts_when_all_validators_return_no_errors(
         excel_columns_mock.return_value = []
         date_formats_mock.return_value = []
         upsert_key_mock.return_value = []
-        validate_target_columns(config_path, sql_columns, import_config)
+        validate_target_columns(sql_columns, import_task)
 
     read_excel_mock.assert_called_once_with(
-        config_path,
-        import_config.sheet,
-        import_config.column_mapping,
+        import_task.working_file,
+        import_task.config.sheet,
+        import_task.config.column_mapping,
         nrows=0
     )
     excel_columns_mock.assert_called_once_with(
         df,
         {column.name for column in sql_columns},
-        f"{import_config.schema}.{import_config.table}"
+        f"{import_task.config.schema}.{import_task.config.table}"
     )
     date_formats_mock.assert_called_once_with(
         set(df.columns),
         sql_columns,
-        import_config.date_formats
+        import_task.config.date_formats
     )
     upsert_key_mock.assert_called_once_with(
-        import_config,
+        import_task.config,
         {column.name for column in sql_columns}
     )
 
 
 def test_validate_target_columns_aggregates_errors_from_all_validators(
-    config_path: Path,
     sql_columns: list[SqlMetaColumn],
-    import_config: ImportConfig
+    import_task: ImportTask
 ):
     df = pd.DataFrame({
         "name1": [1, 2],
@@ -326,26 +334,26 @@ def test_validate_target_columns_aggregates_errors_from_all_validators(
         upsert_key_mock.return_value = ["Upsert key error"]
 
         with pytest.raises(ValueError) as exc_info:
-            validate_target_columns(config_path, sql_columns, import_config)
+            validate_target_columns(sql_columns, import_task)
     
     read_excel_mock.assert_called_once_with(
-        config_path,
-        import_config.sheet,
-        import_config.column_mapping,
+        import_task.working_file,
+        import_task.config.sheet,
+        import_task.config.column_mapping,
         nrows=0
     )
     excel_columns_mock.assert_called_once_with(
         df,
         {column.name for column in sql_columns},
-        f"{import_config.schema}.{import_config.table}"
+        f"{import_task.config.schema}.{import_task.config.table}"
     )
     date_formats_mock.assert_called_once_with(
         set(df.columns),
         sql_columns,
-        import_config.date_formats
+        import_task.config.date_formats
     )
     upsert_key_mock.assert_called_once_with(
-        import_config,
+        import_task.config,
         {column.name for column in sql_columns}
     )
     error_message = str(exc_info.value)
@@ -355,53 +363,38 @@ def test_validate_target_columns_aggregates_errors_from_all_validators(
     assert "Upsert key error" in error_message
     
 
-def test_validate_excel_data_reject_null_in_non_nullable_column(
-    tmp_path: Path,
-    import_config: ImportConfig
-):
+def test_validate_excel_data_reject_null_in_non_nullable_column(import_task: ImportTask):
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, False)
     ]
     data = { "name1": [None, 2] }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
 
     with pytest.raises(ValueError, match="does not allow NULL values, but Excel contains"):
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
 
-def test_validate_excel_data_accept_null_in_nullable_column(
-    tmp_path: Path,
-    import_config: ImportConfig
-):
+def test_validate_excel_data_accept_null_in_nullable_column(import_task: ImportTask):
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True)
     ]
     data = { "name1": [None, 2] }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
 
-    validate_excel_data(file_path, sql_columns, import_config)
+    validate_excel_data(sql_columns, import_task)
 
 
-def test_validate_excel_data_reject_unsupported_sql_type(
-    tmp_path: Path,
-    import_config: ImportConfig
-):
+def test_validate_excel_data_reject_unsupported_sql_type(import_task: ImportTask):
     sql_columns = [
         SqlMetaColumn("name1", "unknown_type", 0, 0, 0, True)
     ]
     data = {"name1": [None, 2]}
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     with pytest.raises(ValueError, match="is not supported."):
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
 
-def test_validate_excel_data_accept_valid_data(
-    tmp_path: Path,
-    import_config: ImportConfig
-):
+def test_validate_excel_data_accept_valid_data(import_task: ImportTask):
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, True)
@@ -410,15 +403,11 @@ def test_validate_excel_data_accept_valid_data(
         "name1": [None, 2, 3],
         "name2": [2, None, None]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    validate_excel_data(file_path, sql_columns, import_config)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    validate_excel_data(sql_columns, import_task)
 
 
-def test_validate_excel_data_reject_null_in_non_nullable_later_column(
-    tmp_path: Path,
-    import_config: ImportConfig
-):
+def test_validate_excel_data_reject_null_in_non_nullable_later_column(import_task: ImportTask):
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, False)
@@ -427,14 +416,17 @@ def test_validate_excel_data_reject_null_in_non_nullable_later_column(
         "name1": [None, 2, 3],
         "name2": [2, 3, None]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     with pytest.raises(ValueError, match="empty values."):
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
 
 def test_validate_excel_data_reject_null_in_upsert_key_column(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",))
+    import_task = ImportTask(
+        ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",)),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx"
+    )
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, False),
@@ -443,14 +435,17 @@ def test_validate_excel_data_reject_null_in_upsert_key_column(tmp_path: Path):
         "name1": [1, None, 3],
         "name2": [10, 20, 30]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     with pytest.raises(ValueError, match="Key column 'name1' cannot contain NULL values for UPSERT, "):
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
 
 def test_validate_excel_data_reject_null_in_later_upsert_key_column(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2"))
+    import_task = ImportTask(
+        ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2")),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, True),
@@ -459,14 +454,17 @@ def test_validate_excel_data_reject_null_in_later_upsert_key_column(tmp_path: Pa
         "name1": [1, 20, 3],
         "name2": [10, 20, None]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     with pytest.raises(ValueError, match="Key column 'name2' cannot contain NULL values for UPSERT, "):
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
 
 def test_validate_excel_data_accept_valid_upsert_keys(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2"))
+    import_task = ImportTask(
+        ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2")),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, True),
@@ -475,13 +473,17 @@ def test_validate_excel_data_accept_valid_upsert_keys(tmp_path: Path):
         "name1": [1, 20, 3],
         "name2": [10, 20, 30]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    validate_excel_data(file_path, sql_columns, import_config)
+
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    validate_excel_data(sql_columns, import_task)
 
 
 def test_validate_excel_data_reject_duplicate_single_key(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",))
+    import_task = ImportTask(
+        ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",)),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, True),
@@ -490,16 +492,21 @@ def test_validate_excel_data_reject_duplicate_single_key(tmp_path: Path):
         "name1": [1, 20, 1],
         "name2": [10, 20, 30]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     with pytest.raises(ValueError, match="Excel contains duplicate values for UPSERT key columns 'name1'") as exc_info:
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
     assert "Duplicate rows: 2, 4." in str(exc_info.value)
 
 
 def test_validate_excel_data_reject_duplicate_composite_key(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2"))
+    import_task = ImportTask(
+        ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2")),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx"
+    )
+
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, True),
@@ -510,14 +517,17 @@ def test_validate_excel_data_reject_duplicate_composite_key(tmp_path: Path):
         "name2": [10, 10, 10],
         "name3": [100, 200, 300]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     with pytest.raises(ValueError, match="Excel contains duplicate values for UPSERT key columns 'name1, name2'"):
-        validate_excel_data(file_path, sql_columns, import_config)
+        validate_excel_data(sql_columns, import_task)
 
 
 def test_validate_excel_data_accept_duplicate_values_in_individual_key_columns(tmp_path: Path):
-    import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2"))
+    import_task = ImportTask(
+        ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1", "name2")),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
     sql_columns = [
         SqlMetaColumn("name1", "int", 0, 0, 0, True),
         SqlMetaColumn("name2", "int", 0, 0, 0, True),
@@ -526,6 +536,5 @@ def test_validate_excel_data_accept_duplicate_values_in_individual_key_columns(t
         "name1": [1, 1, 2],
         "name2": [10, 20, 10]
     }
-    file_path = tmp_path / import_config.file
-    pd.DataFrame(data).to_excel(file_path, sheet_name=import_config.sheet, index=False)
-    validate_excel_data(file_path, sql_columns, import_config)
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    validate_excel_data(sql_columns, import_task)

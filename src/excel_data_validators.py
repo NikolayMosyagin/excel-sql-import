@@ -1,9 +1,9 @@
-from pathlib import Path
 from collections.abc import Mapping
 
 import pandas as pd
 
 from src.sql_meta_column import SqlMetaColumn
+from src.import_task import ImportTask
 from src.import_config import ImportConfig, ImportMode
 from src.excel_utils import read_excel_dataframe, prepare_excel_dataframe
 from src.value_validators import VALIDATOR_BY_SQL_TYPE
@@ -110,15 +110,16 @@ def validate_upsert_key_columns(
 
 
 def validate_target_columns(
-    source_file: Path, 
     sql_meta_columns: list[SqlMetaColumn], 
-    import_config: ImportConfig
+    import_task: ImportTask
 ) -> None:
 
+    config = import_task.config
+
     df = read_excel_dataframe(
-        source_file, 
-        import_config.sheet, 
-        import_config.column_mapping,
+        import_task.working_file, 
+        config.sheet, 
+        config.column_mapping,
         nrows=0
     )
 
@@ -130,7 +131,7 @@ def validate_target_columns(
         validate_excel_columns(
             df,
             sql_columns,
-            f"{import_config.schema}.{import_config.table}"
+            f"{config.schema}.{config.table}"
         )
     )
 
@@ -138,29 +139,29 @@ def validate_target_columns(
         validate_date_format_columns(
             set(df.columns),
             sql_meta_columns,
-            import_config.date_formats
+            config.date_formats
         )
     )
 
     errors.extend(
         validate_upsert_key_columns(
-            import_config,
+            config,
             sql_columns,
         )
     )
 
     if errors:
-        raise ValueError(f"Import '{import_config.name}':\n" + "\n".join(errors))
+        raise ValueError(f"Import '{config.name}':\n" + "\n".join(errors))
     
 
 def validate_excel_data(
-    source_file: Path,
     sql_meta_columns: list[SqlMetaColumn],
-    import_config: ImportConfig
+    import_task: ImportTask
 ) -> None:
 
+    import_config = import_task.config
     df = prepare_excel_dataframe(
-        source_file, 
+        import_task.working_file, 
         import_config.sheet,
         import_config.column_mapping,
         import_config.date_formats

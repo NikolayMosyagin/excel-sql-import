@@ -19,6 +19,7 @@ WHERE s.name = %(schema)s
             if row_data is None:
                 raise ValueError(f"Target table '{import_config.schema}.{import_config.table}' does not exist.")
 
+
 def get_sql_meta_columns(conn: Connection, import_configs: list[ImportConfig]) -> list[list[SqlMetaColumn]]:
     get_columns_query = """
 SELECT 

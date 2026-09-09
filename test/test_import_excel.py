@@ -13,9 +13,12 @@ from src.import_excel import (
     get_config_path,
     parse_args,
     run,
-    configure_logging
+    configure_logging,
+    get_unique_source_files,
+    build_import_tasks
 )
 from src.import_config import ImportConfig, ImportMode
+from src.import_task import ImportTask
 
 
 @pytest.fixture
@@ -121,6 +124,11 @@ def test_import_all_data_commits_after_all_imports(tmp_path: Path):
         ImportConfig("config2", "file2.xlsx", "sheet2", "schema2", "table2"),
     ]
 
+    import_tasks = [
+        ImportTask(import_config, tmp_path / f"source_{import_config.file}", tmp_path / f"working_{import_config.file}")
+        for import_config in import_configs
+    ]
+
     sql_columns = [
         [SqlMetaColumn("column1", "int", 0, 0, 0, False)],
         [SqlMetaColumn("column2", "int", 0, 0, 0, False)],
@@ -129,20 +137,20 @@ def test_import_all_data_commits_after_all_imports(tmp_path: Path):
     conn_mock = MagicMock()
 
     with patch("src.import_excel.import_excel_data") as import_mock:
-        import_all_data(tmp_path, conn_mock, import_configs, sql_columns)
+        import_all_data(conn_mock, import_tasks, sql_columns)
 
     assert import_mock.call_count == 2
     assert import_mock.call_args_list[0].args == (
-        tmp_path / import_configs[0].file,
+        import_tasks[0].working_file,
         conn_mock,
         sql_columns[0],
-        import_configs[0]
+        import_tasks[0].config
     )
     assert import_mock.call_args_list[1].args == (
-        tmp_path / import_configs[1].file,
+        import_tasks[1].working_file,
         conn_mock,
         sql_columns[1],
-        import_configs[1]
+        import_tasks[1].config
     )
     conn_mock.commit.assert_called_once()
     conn_mock.rollback.assert_not_called()
@@ -152,6 +160,11 @@ def test_import_all_data_rolls_back_when_import_fails(tmp_path: Path):
     import_configs = [
         ImportConfig("config1", "file1.xlsx", "sheet1", "schema1", "table1"),
         ImportConfig("config2", "file2.xlsx", "sheet2", "schema2", "table2"),
+    ]
+
+    import_tasks = [
+        ImportTask(import_config, tmp_path / f"source_{import_config.file}", tmp_path / f"working_{import_config.file}")
+        for import_config in import_configs
     ]
 
     sql_columns = [
@@ -166,28 +179,33 @@ def test_import_all_data_rolls_back_when_import_fails(tmp_path: Path):
         side_effect=[None, RuntimeError("Import failed")]
     ) as import_mock:
         with pytest.raises(RuntimeError, match="Import failed"):
-            import_all_data(tmp_path, conn_mock, import_configs, sql_columns)
+            import_all_data(conn_mock, import_tasks, sql_columns)
 
     assert import_mock.call_count == 2
     assert import_mock.call_args_list[0].args == (
-        tmp_path / import_configs[0].file,
+        import_tasks[0].working_file,
         conn_mock,
         sql_columns[0],
-        import_configs[0]
+        import_tasks[0].config
     )
     assert import_mock.call_args_list[1].args == (
-        tmp_path / import_configs[1].file,
+        import_tasks[1].working_file,
         conn_mock,
         sql_columns[1],
-        import_configs[1]
+        import_tasks[1].config
     )
     conn_mock.rollback.assert_called_once()
     conn_mock.commit.assert_not_called()
 
 
 def test_import_all_data_rolls_back_when_input_lengths_mismatch(tmp_path: Path):
-    import_configs = [
-        ImportConfig("config1", "file1.xlsx", "sheet1", "schema1", "table1"),
+
+    import_tasks = [
+        ImportTask(
+            ImportConfig("config1", "file1.xlsx", "sheet1", "schema1", "table1"), 
+            tmp_path / "source_file1.xlsx", 
+            tmp_path / "working_file1.xlsx"
+        )
     ]
 
     sql_columns = [
@@ -199,13 +217,13 @@ def test_import_all_data_rolls_back_when_input_lengths_mismatch(tmp_path: Path):
 
     with patch("src.import_excel.import_excel_data") as import_mock:
         with pytest.raises(ValueError, match="zip()"):
-            import_all_data(tmp_path, conn_mock, import_configs, sql_columns)
+            import_all_data(conn_mock, import_tasks, sql_columns)
 
     import_mock.assert_called_once_with(
-        tmp_path / import_configs[0].file,
+        import_tasks[0].working_file,
         conn_mock,
         sql_columns[0],
-        import_configs[0]
+        import_tasks[0].config
     )      
     conn_mock.commit.assert_not_called()
     conn_mock.rollback.assert_called_once()
@@ -322,3 +340,42 @@ def test_configure_logging_scheduled_writes_to_file(tmp_path: Path, capsys, isol
     assert "Test message" in captured.err
     assert len(log_files) == 1
     assert "Test message" in log_files[0].read_text(encoding="utf-8")
+
+
+def test_get_unique_source_files(tmp_path: Path):
+    import_configs = [
+        ImportConfig("test1", "../data/test.xlsx", "sheet1", "schema1", "table1"),
+        ImportConfig("test2", "data/test.xlsx", "sheet2", "schema2", "table2"),
+        ImportConfig("test3", "test/../../data/test.xlsx", "sheet3", "schema3", "table3")
+    ]
+
+    import_tasks = [
+        ImportTask(
+            import_config, 
+            (tmp_path / import_config.file.replace("test.xlsx", "source_test.xlsx")).resolve(), 
+            (tmp_path / import_config.file.replace("test.xlsx", "working_test.xlsx")).resolve()
+        )
+        for import_config in import_configs
+    ]
+
+    result = get_unique_source_files(import_tasks)
+
+    assert result == [
+        (tmp_path.parent / "data" / "source_test.xlsx").resolve(),
+        (tmp_path / "data" / "source_test.xlsx").resolve()
+    ]
+
+
+def test_build_import_tasks(tmp_path: Path):
+    import_configs = [
+        ImportConfig("test1", "data/test.xlsx", "sheet1", "schema1", "table1"),
+        ImportConfig("test2", "test/test.xlsx", "sheet1", "schema2", "table2"),
+    ]
+
+    result = build_import_tasks(tmp_path, import_configs)
+
+    assert len(result) == 2
+    assert result == [
+        ImportTask(import_configs[0], tmp_path / import_configs[0].file, tmp_path / import_configs[0].file),
+        ImportTask(import_configs[1], tmp_path / import_configs[1].file, tmp_path / import_configs[1].file)
+    ]

@@ -9,6 +9,7 @@ import sys
 from mssql_python import connect, Connection
 
 from src.import_config import ImportConfig, ImportMode
+from src.import_task import ImportTask
 from src.sql_meta_column import SqlMetaColumn
 from src.config_loader import read_imports
 from src.import_source_validators import validate_excel_sources, validate_import_sources
@@ -65,6 +66,35 @@ def get_config_path(
     )
 
 
+def get_unique_source_files(
+    import_tasks: list[ImportTask]
+) -> list[Path]:
+
+    unique_paths = []
+    for import_task in import_tasks:
+        if import_task.source_file not in unique_paths:
+            unique_paths.append(import_task.source_file)
+
+    return unique_paths
+
+
+def build_import_tasks(
+    base_dir: Path,
+    import_configs: list[ImportConfig]
+) -> list[ImportTask]:
+
+    import_tasks = []
+    for config in import_configs:
+        source_file = resolve_path(config.file, base_dir)
+        import_tasks.append(
+            ImportTask(
+                config,
+                source_file,
+                source_file
+            ))
+    return import_tasks
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Import Excel data into SQL Server using a TOML configuration file."
@@ -112,25 +142,24 @@ def import_excel_data(
 
 
 def import_all_data(
-    base_dir: Path,
     conn: Connection, 
-    import_configs: list[ImportConfig],
+    import_tasks: list[ImportTask],
     sql_columns: list[list[SqlMetaColumn]]
 ) -> None:
     try:
-        for import_config, sql_column in zip(import_configs, sql_columns, strict=True):
-            source_file = resolve_path(import_config.file, base_dir)
+        for import_task, sql_column in zip(import_tasks, sql_columns, strict=True):
+            import_config = import_task.config
 
             logger.info(
                 "Importing '%s': %s -> %s.%s (mode: %s)",
                 import_config.name,
-                source_file,
+                import_task.working_file,
                 import_config.schema,
                 import_config.table,
                 import_config.mode.value
             )
 
-            import_excel_data(source_file, conn, sql_column, import_config)
+            import_excel_data(import_task.working_file, conn, sql_column, import_config)
 
             logger.info(
                 "Import '%s' completed.",
@@ -153,8 +182,9 @@ def main(app_dir: Path, config_path: Path) -> None:
 
     logger.info("Validating import sources and target tables.")
     config_dir = config_path.parent
-    validate_import_sources(config_dir, import_configs)
-    validate_excel_sources(config_dir, import_configs)
+    import_tasks = build_import_tasks(config_dir, import_configs)
+    validate_import_sources(import_tasks)
+    validate_excel_sources(import_tasks)
     sql_connection_string = os.getenv("SQL_CONNECTION_STRING")
     if sql_connection_string is None or sql_connection_string.strip() == "":
         raise ValueError("Required environment variable 'SQL_CONNECTION_STRING' is not set or is empty.")
@@ -162,12 +192,11 @@ def main(app_dir: Path, config_path: Path) -> None:
     with connect(sql_connection_string) as conn:
         validate_target_tables(conn, import_configs)
         sql_columns = get_sql_meta_columns(conn, import_configs)
-        for import_config, sql_column in zip(import_configs, sql_columns, strict=True):
-            source_file = resolve_path(import_config.file, config_dir)
-            validate_target_columns(source_file, sql_column, import_config)
-            validate_excel_data(source_file, sql_column, import_config)
+        for import_task, sql_column in zip(import_tasks, sql_columns, strict=True):
+            validate_target_columns(sql_column, import_task)
+            validate_excel_data(sql_column, import_task)
         logger.info("Validation completed successfully.")
-        import_all_data(config_dir, conn, import_configs, sql_columns)
+        import_all_data(conn, import_tasks, sql_columns)
 
 
 def run(app_dir: Path, config_path: Path) -> int:
