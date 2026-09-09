@@ -10,7 +10,8 @@ from src.import_excel import (
     import_excel_data,
     import_all_data,
     get_config_path,
-    parse_args
+    parse_args,
+    run
 )
 from src.import_config import ImportConfig, ImportMode
 
@@ -226,3 +227,35 @@ def test_get_config_path_keeps_absolute_config_path(tmp_path: Path):
     config_path = tmp_path / "imports.toml"
     result = get_config_path(str(config_path), app_dir, cur_dir)
     assert result == config_path
+
+
+def test_run_returns_zero_when_import_succeeds():
+    with (
+        patch("src.import_excel.main") as main_mock,
+        patch("src.import_excel.logger.info") as logger_info_mock,
+        patch("src.import_excel.logger.exception") as logger_exception_mock
+    ):
+        result = run()
+
+    assert result == 0
+    assert logger_info_mock.call_count == 2
+    args_list = logger_info_mock.call_args_list
+    assert args_list[0].args[0] == "Import started."
+    assert args_list[1].args[0] == "Import completed successfully."
+    main_mock.assert_called_once()
+    logger_exception_mock.assert_not_called()
+
+
+def test_run_returns_one_when_import_fails():
+    with (
+        patch("src.import_excel.main") as main_mock,
+        patch("src.import_excel.logger.info") as logger_info_mock,
+        patch("src.import_excel.logger.exception") as logger_exception_mock
+    ):
+        main_mock.side_effect = RuntimeError("Test Error")
+        result = run()
+
+    assert result == 1
+    logger_info_mock.assert_called_once_with("Import started.")
+    main_mock.assert_called_once()
+    logger_exception_mock.assert_called_once_with("Import failed.")
