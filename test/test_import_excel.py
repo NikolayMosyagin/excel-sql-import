@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,9 +12,32 @@ from src.import_excel import (
     import_all_data,
     get_config_path,
     parse_args,
-    run
+    run,
+    configure_logging
 )
 from src.import_config import ImportConfig, ImportMode
+
+
+@pytest.fixture
+def isolated_logging():
+    root_logger = logging.getLogger()
+
+    original_handlers = root_logger.handlers[:]
+    original_level = root_logger.level
+
+    for handler in original_handlers:
+        root_logger.removeHandler(handler)
+
+    yield
+
+    for handler in root_logger.handlers[:]:
+        handler.close()
+        root_logger.removeHandler(handler)
+
+    for handler in original_handlers:
+        root_logger.addHandler(handler)
+
+    root_logger.setLevel(original_level)
 
 
 @pytest.mark.parametrize(
@@ -207,6 +231,15 @@ def test_parse_args_rejects_config_without_value():
         parse_args(["--config"])
 
 
+def test_parse_args_accepts_scheduled_argument():
+    result = parse_args(["--scheduled"])
+    assert result.scheduled
+
+def test_parse_args_defaults_to_non_scheduled_mode():
+    result = parse_args([])
+    assert not result.scheduled
+
+
 def test_get_config_path_uses_default_config(tmp_path: Path):
     app_dir = tmp_path / "app"
     cur_dir = tmp_path / "cur"
@@ -229,33 +262,63 @@ def test_get_config_path_keeps_absolute_config_path(tmp_path: Path):
     assert result == config_path
 
 
-def test_run_returns_zero_when_import_succeeds():
+def test_run_returns_zero_when_import_succeeds(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    config_path = tmp_path / "config" / "imports.toml"
     with (
         patch("src.import_excel.main") as main_mock,
         patch("src.import_excel.logger.info") as logger_info_mock,
         patch("src.import_excel.logger.exception") as logger_exception_mock
     ):
-        result = run()
+        result = run(app_dir, config_path)
 
     assert result == 0
     assert logger_info_mock.call_count == 2
     args_list = logger_info_mock.call_args_list
     assert args_list[0].args[0] == "Import started."
     assert args_list[1].args[0] == "Import completed successfully."
-    main_mock.assert_called_once()
+    main_mock.assert_called_once_with(app_dir, config_path)
     logger_exception_mock.assert_not_called()
 
 
-def test_run_returns_one_when_import_fails():
+def test_run_returns_one_when_import_fails(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    config_path = tmp_path / "config" / "imports.toml"
     with (
         patch("src.import_excel.main") as main_mock,
         patch("src.import_excel.logger.info") as logger_info_mock,
         patch("src.import_excel.logger.exception") as logger_exception_mock
     ):
         main_mock.side_effect = RuntimeError("Test Error")
-        result = run()
+        result = run(app_dir, config_path)
 
     assert result == 1
     logger_info_mock.assert_called_once_with("Import started.")
-    main_mock.assert_called_once()
+    main_mock.assert_called_once_with(app_dir, config_path)
     logger_exception_mock.assert_called_once_with("Import failed.")
+
+
+def test_configure_logging_without_scheduled_does_not_create_log_file(tmp_path: Path, capsys, isolated_logging):
+    configure_logging(False, tmp_path)
+
+    logging.getLogger("test").info("Test message")
+
+    captured = capsys.readouterr()
+
+    assert "Test message" in captured.err
+    assert not (tmp_path / "logs").exists()
+
+
+def test_configure_logging_scheduled_writes_to_file(tmp_path: Path, capsys, isolated_logging):
+    configure_logging(True, tmp_path)
+
+    logging.getLogger("test").info("Test message")
+
+    captured = capsys.readouterr()
+
+    logs_dir = tmp_path / "logs"
+    log_files = list(logs_dir.glob("import_*.log"))
+
+    assert "Test message" in captured.err
+    assert len(log_files) == 1
+    assert "Test message" in log_files[0].read_text(encoding="utf-8")
