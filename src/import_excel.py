@@ -32,10 +32,28 @@ def get_processing_run_dir(config_dir: Path, run_id: str) -> Path:
     return config_dir / "processing" / run_id
 
 
+def get_processed_run_dir(config_dir: Path, run_id: str) -> Path:
+    return config_dir / "processed" / run_id
+
+
 def create_processing_run_dir(processing_run_dir: Path) -> None:
     processing_dir = processing_run_dir.parent
     processing_dir.mkdir(parents=True, exist_ok=True)
     processing_run_dir.mkdir()
+
+
+def archive_processing_run(
+    processing_run_dir: Path,
+    processed_run_dir: Path
+) -> None:
+
+    processed_dir = processed_run_dir.parent
+    processed_dir.mkdir(exist_ok=True)
+    if processed_run_dir.exists():
+        raise FileExistsError(
+            f"Processed run directory already exists: '{processed_run_dir}'. "
+            "Refusing to overwrite or merge archived files.")
+    shutil.move(processing_run_dir, processed_run_dir)
 
 
 def configure_logging(
@@ -268,6 +286,10 @@ def main(
             validate_excel_data(sql_column, import_task)
         logger.info("Validation completed successfully.")
         import_all_data(conn, import_tasks, sql_columns)
+
+    if scheduled:
+        processed_run_dir = get_processed_run_dir(config_dir, run_id)
+        archive_processing_run(processing_run_dir, processed_run_dir)
 
 
 def run(

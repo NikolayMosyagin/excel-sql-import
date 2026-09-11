@@ -22,6 +22,8 @@ from src.import_excel import (
     create_processing_run_dir,
     create_run_id,
     get_processing_run_dir,
+    get_processed_run_dir,
+    archive_processing_run,
 )
 from src.import_config import ImportConfig, ImportMode
 from src.import_task import ImportTask
@@ -546,6 +548,8 @@ def test_main_uses_manual_import_tasks_when_not_scheduled(tmp_path: Path):
         patch("src.import_excel.validate_target_columns"),
         patch("src.import_excel.validate_excel_data"),
         patch("src.import_excel.import_all_data"),
+        patch("src.import_excel.get_processed_run_dir") as processed_dir_mock,
+        patch("src.import_excel.archive_processing_run") as archive_processing_mock
     ):
         connect_mock.return_value.__enter__.return_value = conn_mock
 
@@ -560,6 +564,8 @@ def test_main_uses_manual_import_tasks_when_not_scheduled(tmp_path: Path):
     processing_dir_mock.assert_not_called()
     create_processing_dir_mock.assert_not_called()
     move_files_mock.assert_not_called()
+    processed_dir_mock.assert_not_called()
+    archive_processing_mock.assert_not_called()
 
 
 def test_main_uses_scheduled_import_tasks_when_scheduled(tmp_path: Path):
@@ -567,6 +573,7 @@ def test_main_uses_scheduled_import_tasks_when_scheduled(tmp_path: Path):
     config_path = tmp_path / "config" / "imports.toml"
     run_id = "123"
     processing_run_dir = config_path.parent / "processing" / run_id
+    processed_run_dir = config_path.parent / "processed" / run_id
 
     import_config = ImportConfig(
         "test",
@@ -610,6 +617,8 @@ def test_main_uses_scheduled_import_tasks_when_scheduled(tmp_path: Path):
         patch("src.import_excel.validate_target_columns"),
         patch("src.import_excel.validate_excel_data"),
         patch("src.import_excel.import_all_data"),
+        patch("src.import_excel.get_processed_run_dir", return_value=processed_run_dir) as processed_dir_mock,
+        patch("src.import_excel.archive_processing_run") as archive_processing_mock
     ):
         connect_mock.return_value.__enter__.return_value = conn_mock
 
@@ -628,3 +637,46 @@ def test_main_uses_scheduled_import_tasks_when_scheduled(tmp_path: Path):
     )
     create_processing_dir_mock.assert_called_once_with(processing_run_dir)
     move_files_mock.assert_called_once_with(import_tasks)
+    processed_dir_mock.assert_called_once_with(
+        config_path.parent,
+        run_id
+    )
+    archive_processing_mock.assert_called_once_with(
+        processing_run_dir,
+        processed_run_dir
+    )
+
+
+def test_get_processed_run_dir(tmp_path: Path):
+    run_id = "123"
+    result = get_processed_run_dir(tmp_path, run_id)
+
+    assert result == tmp_path / "processed" / run_id
+
+
+def test_archive_processing_run_moves_run_to_processed(tmp_path: Path):
+    run_id = "123"
+    processing_run_dir = tmp_path / "processing" / run_id
+    processing_run_dir.mkdir(parents=True)
+    data_file = processing_run_dir / "data.txt"
+    data_file.write_text("Test", encoding="utf-8")
+    processed_run_dir = tmp_path / "processed" / run_id
+    archive_processing_run(processing_run_dir, processed_run_dir)
+
+    assert not processing_run_dir.exists()
+    assert processed_run_dir.exists()
+    data_file_new = processed_run_dir / "data.txt"
+    assert data_file_new.exists()
+    assert data_file_new.read_text() == "Test"
+
+
+def test_archive_processing_run_rejects_existing_processed_run(tmp_path: Path):
+    run_id = "123"
+    processing_run_dir = tmp_path / "processing" / run_id
+    processing_run_dir.mkdir(parents=True)
+    data_file = processing_run_dir / "data.txt"
+    data_file.write_text("Test", encoding="utf-8")
+    processed_run_dir = tmp_path / "processed" / run_id
+    processed_run_dir.mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        archive_processing_run(processing_run_dir, processed_run_dir)
