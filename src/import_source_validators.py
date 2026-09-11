@@ -6,12 +6,12 @@ from src.excel_utils import get_excel_engine
 
 def validate_import_sources(import_tasks: list[ImportTask]) -> None:
     for import_task in import_tasks:
-        working_file = import_task.working_file
-        if not working_file.exists():
-            raise FileNotFoundError(f"Source file not found: '{working_file}'.")
+        source_file = import_task.source_file
+        if not source_file.exists():
+            raise FileNotFoundError(f"Source file not found: '{source_file}'.")
     
-        if working_file.is_dir():
-            raise IsADirectoryError(f"Expected a file, but found a directory: '{working_file}'.")
+        if source_file.is_dir():
+            raise IsADirectoryError(f"Expected a file, but found a directory: '{source_file}'.")
 
 
 def validate_excel_sources(import_tasks: list[ImportTask]) -> None:

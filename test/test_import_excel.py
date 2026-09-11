@@ -13,9 +13,15 @@ from src.import_excel import (
     get_config_path,
     parse_args,
     run,
+    main,
     configure_logging,
     get_unique_source_files,
-    build_import_tasks
+    build_manual_import_tasks,
+    build_scheduled_import_tasks,
+    move_source_files,
+    create_processing_run_dir,
+    create_run_id,
+    get_processing_run_dir,
 )
 from src.import_config import ImportConfig, ImportMode
 from src.import_task import ImportTask
@@ -283,41 +289,46 @@ def test_get_config_path_keeps_absolute_config_path(tmp_path: Path):
 def test_run_returns_zero_when_import_succeeds(tmp_path: Path):
     app_dir = tmp_path / "app"
     config_path = tmp_path / "config" / "imports.toml"
+    scheduled = True
+    run_id = "123"
     with (
         patch("src.import_excel.main") as main_mock,
         patch("src.import_excel.logger.info") as logger_info_mock,
         patch("src.import_excel.logger.exception") as logger_exception_mock
     ):
-        result = run(app_dir, config_path)
+        result = run(app_dir, config_path, scheduled, run_id)
 
     assert result == 0
     assert logger_info_mock.call_count == 2
     args_list = logger_info_mock.call_args_list
     assert args_list[0].args[0] == "Import started."
     assert args_list[1].args[0] == "Import completed successfully."
-    main_mock.assert_called_once_with(app_dir, config_path)
+    main_mock.assert_called_once_with(app_dir, config_path, scheduled, run_id)
     logger_exception_mock.assert_not_called()
 
 
 def test_run_returns_one_when_import_fails(tmp_path: Path):
     app_dir = tmp_path / "app"
     config_path = tmp_path / "config" / "imports.toml"
+    run_id = "12"
+    scheduled = False
     with (
         patch("src.import_excel.main") as main_mock,
         patch("src.import_excel.logger.info") as logger_info_mock,
         patch("src.import_excel.logger.exception") as logger_exception_mock
     ):
         main_mock.side_effect = RuntimeError("Test Error")
-        result = run(app_dir, config_path)
+        result = run(app_dir, config_path, scheduled, run_id)
 
     assert result == 1
     logger_info_mock.assert_called_once_with("Import started.")
-    main_mock.assert_called_once_with(app_dir, config_path)
+    main_mock.assert_called_once_with(app_dir, config_path, scheduled, run_id)
     logger_exception_mock.assert_called_once_with("Import failed.")
 
 
 def test_configure_logging_without_scheduled_does_not_create_log_file(tmp_path: Path, capsys, isolated_logging):
-    configure_logging(False, tmp_path)
+    run_id = "1"
+    configure_logging(False, tmp_path, run_id)
 
     logging.getLogger("test").info("Test message")
 
@@ -328,18 +339,18 @@ def test_configure_logging_without_scheduled_does_not_create_log_file(tmp_path: 
 
 
 def test_configure_logging_scheduled_writes_to_file(tmp_path: Path, capsys, isolated_logging):
-    configure_logging(True, tmp_path)
+    run_id = "1"
+    configure_logging(True, tmp_path, run_id)
 
     logging.getLogger("test").info("Test message")
 
     captured = capsys.readouterr()
 
-    logs_dir = tmp_path / "logs"
-    log_files = list(logs_dir.glob("import_*.log"))
+    log_file = tmp_path / "logs" / "import_1.log"
 
     assert "Test message" in captured.err
-    assert len(log_files) == 1
-    assert "Test message" in log_files[0].read_text(encoding="utf-8")
+    assert log_file.exists()
+    assert "Test message" in log_file.read_text(encoding="utf-8")
 
 
 def test_get_unique_source_files(tmp_path: Path):
@@ -349,33 +360,271 @@ def test_get_unique_source_files(tmp_path: Path):
         ImportConfig("test3", "test/../../data/test.xlsx", "sheet3", "schema3", "table3")
     ]
 
-    import_tasks = [
-        ImportTask(
-            import_config, 
-            (tmp_path / import_config.file.replace("test.xlsx", "source_test.xlsx")).resolve(), 
-            (tmp_path / import_config.file.replace("test.xlsx", "working_test.xlsx")).resolve()
-        )
-        for import_config in import_configs
-    ]
-
-    result = get_unique_source_files(import_tasks)
+    result = get_unique_source_files(tmp_path, import_configs)
 
     assert result == [
-        (tmp_path.parent / "data" / "source_test.xlsx").resolve(),
-        (tmp_path / "data" / "source_test.xlsx").resolve()
+        (tmp_path.parent / "data" / "test.xlsx").resolve(),
+        (tmp_path / "data" / "test.xlsx").resolve()
     ]
 
 
-def test_build_import_tasks(tmp_path: Path):
+def test_build_manual_import_tasks(tmp_path: Path):
     import_configs = [
         ImportConfig("test1", "data/test.xlsx", "sheet1", "schema1", "table1"),
         ImportConfig("test2", "test/test.xlsx", "sheet1", "schema2", "table2"),
     ]
 
-    result = build_import_tasks(tmp_path, import_configs)
+    result = build_manual_import_tasks(tmp_path, import_configs)
 
     assert len(result) == 2
     assert result == [
         ImportTask(import_configs[0], tmp_path / import_configs[0].file, tmp_path / import_configs[0].file),
         ImportTask(import_configs[1], tmp_path / import_configs[1].file, tmp_path / import_configs[1].file)
     ]
+
+
+def test_build_scheduled_import_tasks_one_source_file(tmp_path: Path):
+    import_configs = [
+        ImportConfig("test1", "data/file.xlsx", "sheet1", "schema1", "table1"),
+        ImportConfig("test2", "data/file.xlsx", "sheet2", "schema1", "table2")
+    ]
+    processing_dir = tmp_path / "processing" / "run"
+    result = build_scheduled_import_tasks(tmp_path, import_configs, processing_dir)
+
+    assert len(result) == 2
+    assert result[0].source_file == tmp_path / result[0].config.file
+    assert result[0].working_file == result[1].working_file
+    assert result[0].working_file == processing_dir / "001_file.xlsx"
+
+
+def test_build_scheduled_import_tasks_two_different_source_file_with_same_name(tmp_path: Path):
+    import_configs = [
+        ImportConfig("test1", "data/file.xlsx", "sheet1", "schema1", "table1"),
+        ImportConfig("test2", "data_other/file.xlsx", "sheet2", "schema1", "table2")
+    ]
+    processing_dir = tmp_path / "processing" / "run"
+    result = build_scheduled_import_tasks(tmp_path, import_configs, processing_dir)
+
+    assert len(result) == 2
+    assert result[0].working_file != result[1].working_file
+    assert result[0].source_file == tmp_path / result[0].config.file
+    assert result[1].source_file == tmp_path / result[1].config.file
+    assert result[0].working_file == processing_dir / "001_file.xlsx"
+    assert result[1].working_file == processing_dir / "002_file.xlsx"
+
+
+def test_move_source_files_one_source_file(tmp_path: Path):
+    source_file = tmp_path / "test.xlsx"
+    source_df = pd.DataFrame({
+        "Column1": [1, 2],
+        "Column2": [1, 2]
+    })
+    source_df.to_excel(source_file, sheet_name="sheet1", index=False)
+    processing_dir = tmp_path / "processing"
+    processing_dir.mkdir()
+    working_file = processing_dir / "001_test.xlsx"
+    import_tasks = [
+        ImportTask(
+            ImportConfig("name1", "test.xlsx", "sheet1", "schema1", "table1"),
+            source_file,
+            working_file
+        ),
+        ImportTask(
+            ImportConfig("name2", "data/test.xlsx", "sheet2", "schema1", "table2"),
+            source_file,
+            working_file
+        )
+    ]
+
+    move_source_files(import_tasks)
+
+    assert working_file.exists()
+    assert not source_file.exists()
+    df = pd.read_excel(working_file, sheet_name="sheet1", engine="openpyxl")
+    assert df.equals(source_df)
+
+
+def test_move_source_files_two_different_source_file(tmp_path: Path):
+    processing_dir = tmp_path / "processing"
+    processing_dir.mkdir()
+    source_df = pd.DataFrame({
+        "Column1": [1, 2],
+        "Column2": [12, 24]
+    })
+    import_tasks = [
+        ImportTask(
+            ImportConfig("name1", "test1.xlsx", "sheet1", "schema1", "table1"),
+            tmp_path / "test1.xlsx",
+            processing_dir / "001_test1.xlsx"
+        ),
+        ImportTask(
+            ImportConfig("name2", "test2.xlsx", "sheet1", "schema1", "table2"),
+            tmp_path / "test2.xlsx",
+            processing_dir / "002_test2.xlsx"
+        )
+    ]
+    for import_task in import_tasks:
+        source_df.to_excel(import_task.source_file, sheet_name="sheet1", index=False)
+
+    move_source_files(import_tasks)
+    assert all(import_task.working_file.exists() for import_task in import_tasks)
+    assert all(not import_task.source_file.exists() for import_task in import_tasks)
+    assert all(
+        pd.read_excel(import_task.working_file, sheet_name="sheet1", engine="openpyxl").equals(source_df)
+        for import_task in import_tasks
+    )
+
+
+def test_create_processing_run_dir_accepts(tmp_path: Path):
+    run_id = "2000-05-31_22-30-31"
+    processing_run_dir = tmp_path / "processing" / run_id
+    create_processing_run_dir(processing_run_dir)
+    assert processing_run_dir.exists()
+    assert processing_run_dir.is_dir()
+
+
+def test_create_processing_run_dir_rejects_run_id_dir_exist(tmp_path: Path):
+    run_id = "2000-05-31_22-30-31"
+    processing_run_dir = tmp_path / "processing" / run_id
+    processing_run_dir.mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        create_processing_run_dir(processing_run_dir)
+
+
+def test_create_run_id():
+    with patch("src.import_excel.datetime") as datetime_mock:
+        datetime_mock.now.return_value = datetime(2000, 5, 31, 22, 30, 31)
+        result = create_run_id()
+
+    assert result == "2000-05-31_22-30-31"
+
+
+def test_get_processing_run_dir(tmp_path: Path):
+    run_id = "12"
+    result = get_processing_run_dir(tmp_path, run_id)
+    assert result == tmp_path / "processing" / run_id
+
+
+def test_main_uses_manual_import_tasks_when_not_scheduled(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    config_path = tmp_path / "config" / "imports.toml"
+    run_id = "123"
+
+    import_config = ImportConfig(
+        "test",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1"
+    )
+    import_configs = [import_config]
+
+    import_tasks = [
+        ImportTask(
+            import_config,
+            tmp_path / "source_test.xlsx",
+            tmp_path / "source_test.xlsx"
+        )
+    ]
+
+    conn_mock = MagicMock()
+    sql_columns = [[]]
+
+    with (
+        patch("src.import_excel.read_imports", return_value=import_configs),
+        patch("src.import_excel.build_manual_import_tasks", return_value=import_tasks) as manual_tasks_mock,
+        patch("src.import_excel.build_scheduled_import_tasks") as scheduled_tasks_mock,
+        patch("src.import_excel.get_processing_run_dir") as processing_dir_mock,
+        patch("src.import_excel.create_processing_run_dir") as create_processing_dir_mock,
+        patch("src.import_excel.move_source_files") as move_files_mock,
+        patch("src.import_excel.validate_import_sources"),
+        patch("src.import_excel.validate_excel_sources"),
+        patch("src.import_excel.os.getenv", return_value="connection"),
+        patch("src.import_excel.connect") as connect_mock,
+        patch("src.import_excel.validate_target_tables"),
+        patch("src.import_excel.get_sql_meta_columns", return_value=sql_columns),
+        patch("src.import_excel.validate_target_columns"),
+        patch("src.import_excel.validate_excel_data"),
+        patch("src.import_excel.import_all_data"),
+    ):
+        connect_mock.return_value.__enter__.return_value = conn_mock
+
+        main(app_dir, config_path, False, run_id)
+
+    manual_tasks_mock.assert_called_once_with(
+        config_path.parent,
+        import_configs
+    )
+    scheduled_tasks_mock.assert_not_called()
+
+    processing_dir_mock.assert_not_called()
+    create_processing_dir_mock.assert_not_called()
+    move_files_mock.assert_not_called()
+
+
+def test_main_uses_scheduled_import_tasks_when_scheduled(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    config_path = tmp_path / "config" / "imports.toml"
+    run_id = "123"
+    processing_run_dir = config_path.parent / "processing" / run_id
+
+    import_config = ImportConfig(
+        "test",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1"
+    )
+    import_configs = [import_config]
+
+    import_tasks = [
+        ImportTask(
+            import_config,
+            tmp_path / "source_test.xlsx",
+            processing_run_dir / "001_test.xlsx"
+        )
+    ]
+
+    conn_mock = MagicMock()
+    sql_columns = [[]]
+
+    with (
+        patch("src.import_excel.read_imports", return_value=import_configs),
+        patch("src.import_excel.build_manual_import_tasks") as manual_tasks_mock,
+        patch(
+            "src.import_excel.get_processing_run_dir",
+            return_value=processing_run_dir
+        ) as processing_dir_mock,
+        patch(
+            "src.import_excel.build_scheduled_import_tasks",
+            return_value=import_tasks
+        ) as scheduled_tasks_mock,
+        patch("src.import_excel.validate_import_sources"),
+        patch("src.import_excel.create_processing_run_dir") as create_processing_dir_mock,
+        patch("src.import_excel.move_source_files") as move_files_mock,
+        patch("src.import_excel.validate_excel_sources"),
+        patch("src.import_excel.os.getenv", return_value="connection"),
+        patch("src.import_excel.connect") as connect_mock,
+        patch("src.import_excel.validate_target_tables"),
+        patch("src.import_excel.get_sql_meta_columns", return_value=sql_columns),
+        patch("src.import_excel.validate_target_columns"),
+        patch("src.import_excel.validate_excel_data"),
+        patch("src.import_excel.import_all_data"),
+    ):
+        connect_mock.return_value.__enter__.return_value = conn_mock
+
+        main(app_dir, config_path, True, run_id)
+
+    manual_tasks_mock.assert_not_called()
+
+    processing_dir_mock.assert_called_once_with(
+        config_path.parent,
+        run_id
+    )
+    scheduled_tasks_mock.assert_called_once_with(
+        config_path.parent,
+        import_configs,
+        processing_run_dir
+    )
+    create_processing_dir_mock.assert_called_once_with(processing_run_dir)
+    move_files_mock.assert_called_once_with(import_tasks)

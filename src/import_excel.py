@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import logging
 import os
 from pathlib import Path
+import shutil
 import sys
 
 from mssql_python import connect, Connection
@@ -23,7 +24,25 @@ from src.path_utils import resolve_path
 logger = logging.getLogger(__name__)
 
 
-def configure_logging(scheduled: bool, config_dir: Path) -> None:
+def create_run_id() -> str:
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def get_processing_run_dir(config_dir: Path, run_id: str) -> Path:
+    return config_dir / "processing" / run_id
+
+
+def create_processing_run_dir(processing_run_dir: Path) -> None:
+    processing_dir = processing_run_dir.parent
+    processing_dir.mkdir(parents=True, exist_ok=True)
+    processing_run_dir.mkdir()
+
+
+def configure_logging(
+    scheduled: bool, 
+    config_dir: Path,
+    run_id: str,
+) -> None:
 
     handlers = [logging.StreamHandler()]
 
@@ -31,8 +50,7 @@ def configure_logging(scheduled: bool, config_dir: Path) -> None:
         logs_dir = config_dir / "logs"
         logs_dir.mkdir(exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        log_path = logs_dir / f"import_{timestamp}.log"
+        log_path = logs_dir / f"import_{run_id}.log"
 
         handlers.append(
             logging.FileHandler(log_path, encoding="utf-8")
@@ -67,18 +85,20 @@ def get_config_path(
 
 
 def get_unique_source_files(
-    import_tasks: list[ImportTask]
+    base_dir: Path,
+    import_configs: list[ImportConfig]
 ) -> list[Path]:
 
-    unique_paths = []
-    for import_task in import_tasks:
-        if import_task.source_file not in unique_paths:
-            unique_paths.append(import_task.source_file)
+    unique_files = []
+    for import_config in import_configs:
+        source_file = resolve_path(import_config.file, base_dir)
+        if source_file not in unique_files:
+            unique_files.append(source_file)
 
-    return unique_paths
+    return unique_files
 
 
-def build_import_tasks(
+def build_manual_import_tasks(
     base_dir: Path,
     import_configs: list[ImportConfig]
 ) -> list[ImportTask]:
@@ -94,6 +114,41 @@ def build_import_tasks(
             ))
     return import_tasks
 
+
+def build_scheduled_import_tasks(
+    base_dir: Path,
+    import_configs: list[ImportConfig],
+    processing_run_dir: Path
+) -> list[ImportTask]:
+
+    import_tasks = []
+    unique_files = get_unique_source_files(base_dir, import_configs)
+
+    working_files_by_source = {
+        file: processing_run_dir / f"{(num + 1):03}_{file.name}"
+        for num, file in enumerate(unique_files)
+    }
+
+    for import_config in import_configs:
+        source_file = resolve_path(import_config.file, base_dir)
+        import_tasks.append(
+            ImportTask(
+                import_config,
+                source_file,
+                working_files_by_source[source_file]
+            )
+        )
+    return import_tasks
+
+
+def move_source_files(import_tasks: list[ImportTask]) -> None:
+    moved_files = set()
+    for import_task in import_tasks:
+        if import_task.source_file in moved_files:
+            continue
+        shutil.move(import_task.source_file, import_task.working_file)
+        moved_files.add(import_task.source_file)
+        
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -173,7 +228,12 @@ def import_all_data(
         raise
 
 
-def main(app_dir: Path, config_path: Path) -> None:
+def main(
+    app_dir: Path,
+    config_path: Path,
+    scheduled: bool,
+    run_id: str
+) -> None:
     load_dotenv(app_dir / ".env")
     logger.info("Using config: %s", config_path)
 
@@ -182,8 +242,19 @@ def main(app_dir: Path, config_path: Path) -> None:
 
     logger.info("Validating import sources and target tables.")
     config_dir = config_path.parent
-    import_tasks = build_import_tasks(config_dir, import_configs)
+
+    if scheduled:
+        processing_run_dir = get_processing_run_dir(config_dir, run_id)
+        import_tasks = build_scheduled_import_tasks(config_dir, import_configs, processing_run_dir)
+    else:
+        import_tasks = build_manual_import_tasks(config_dir, import_configs)
+
     validate_import_sources(import_tasks)
+
+    if scheduled:
+        create_processing_run_dir(processing_run_dir)
+        move_source_files(import_tasks)
+
     validate_excel_sources(import_tasks)
     sql_connection_string = os.getenv("SQL_CONNECTION_STRING")
     if sql_connection_string is None or sql_connection_string.strip() == "":
@@ -199,10 +270,15 @@ def main(app_dir: Path, config_path: Path) -> None:
         import_all_data(conn, import_tasks, sql_columns)
 
 
-def run(app_dir: Path, config_path: Path) -> int:
+def run(
+    app_dir: Path,
+    config_path: Path,
+    scheduled: bool,
+    run_id: str
+) -> int:
     try:
         logger.info("Import started.")
-        main(app_dir, config_path)
+        main(app_dir, config_path, scheduled, run_id)
         logger.info("Import completed successfully.")
         return 0
     except Exception:
@@ -215,5 +291,6 @@ if __name__ == '__main__':
     app_dir = get_root_path()
     config_path = get_config_path(args.config, app_dir, Path.cwd())
     config_dir = config_path.parent
-    configure_logging(args.scheduled, config_dir)
-    sys.exit(run(app_dir, config_path))
+    run_id = create_run_id()
+    configure_logging(args.scheduled, config_dir, run_id)
+    sys.exit(run(app_dir, config_path, args.scheduled, run_id))

@@ -36,20 +36,20 @@ def test_validate_import_sources_reject_missing_file(import_tasks: list[ImportTa
 def test_validate_import_sources_reject_directory(tmp_path: Path):
     import_config = ImportConfig('test1', 'test1', 'sheet1', 'schema1', 'table1')
     import_tasks = [ImportTask(import_config, tmp_path / import_config.file, tmp_path / import_config.file)]
-    import_tasks[0].working_file.mkdir()
+    import_tasks[0].source_file.mkdir()
     with pytest.raises(IsADirectoryError, match="Expected a file, but found a directory:"):
         validate_import_sources(import_tasks)
 
 
 def test_validate_import_sources_reject_missing_file_in_later_config(import_tasks: list[ImportTask]):
-    import_tasks[0].working_file.write_text("", encoding="utf-8")
+    import_tasks[0].source_file.write_text("", encoding="utf-8")
     with pytest.raises(FileNotFoundError, match="Source file not found: "):
         validate_import_sources(import_tasks)
 
 
 def test_validate_import_sources_accept_valid_files(import_tasks: list[ImportTask]):
-    import_tasks[0].working_file.write_text("", encoding="utf-8")
-    import_tasks[1].working_file.write_text("", encoding="utf-8")
+    import_tasks[0].source_file.write_text("", encoding="utf-8")
+    import_tasks[1].source_file.write_text("", encoding="utf-8")
     validate_import_sources(import_tasks)
 
 
