@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import logging
 import os
 from pathlib import Path
-import shutil
 import sys
 
 from mssql_python import connect, Connection
@@ -17,6 +16,14 @@ from src.import_source_validators import validate_excel_sources, validate_import
 from src.excel_data_validators import validate_excel_data, validate_target_columns
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
 from src.sql_data_import import write_dataframe, upsert_dataframe
+from src.import_task_builder import build_manual_import_tasks, build_scheduled_import_tasks
+from src.import_file_manager import (
+    get_processing_run_dir,
+    get_processed_run_dir,
+    create_processing_run_dir,
+    move_source_files,
+    archive_processing_run
+)
 from src.excel_utils import prepare_excel_dataframe
 from src.path_utils import resolve_path
 
@@ -26,34 +33,6 @@ logger = logging.getLogger(__name__)
 
 def create_run_id() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-
-def get_processing_run_dir(config_dir: Path, run_id: str) -> Path:
-    return config_dir / "processing" / run_id
-
-
-def get_processed_run_dir(config_dir: Path, run_id: str) -> Path:
-    return config_dir / "processed" / run_id
-
-
-def create_processing_run_dir(processing_run_dir: Path) -> None:
-    processing_dir = processing_run_dir.parent
-    processing_dir.mkdir(parents=True, exist_ok=True)
-    processing_run_dir.mkdir()
-
-
-def archive_processing_run(
-    processing_run_dir: Path,
-    processed_run_dir: Path
-) -> None:
-
-    processed_dir = processed_run_dir.parent
-    processed_dir.mkdir(exist_ok=True)
-    if processed_run_dir.exists():
-        raise FileExistsError(
-            f"Processed run directory already exists: '{processed_run_dir}'. "
-            "Refusing to overwrite or merge archived files.")
-    shutil.move(processing_run_dir, processed_run_dir)
 
 
 def configure_logging(
@@ -100,72 +79,6 @@ def get_config_path(
         if config is not None 
         else app_dir / "config" / "imports.toml"
     )
-
-
-def get_unique_source_files(
-    base_dir: Path,
-    import_configs: list[ImportConfig]
-) -> list[Path]:
-
-    unique_files = []
-    for import_config in import_configs:
-        source_file = resolve_path(import_config.file, base_dir)
-        if source_file not in unique_files:
-            unique_files.append(source_file)
-
-    return unique_files
-
-
-def build_manual_import_tasks(
-    base_dir: Path,
-    import_configs: list[ImportConfig]
-) -> list[ImportTask]:
-
-    import_tasks = []
-    for config in import_configs:
-        source_file = resolve_path(config.file, base_dir)
-        import_tasks.append(
-            ImportTask(
-                config,
-                source_file,
-                source_file
-            ))
-    return import_tasks
-
-
-def build_scheduled_import_tasks(
-    base_dir: Path,
-    import_configs: list[ImportConfig],
-    processing_run_dir: Path
-) -> list[ImportTask]:
-
-    import_tasks = []
-    unique_files = get_unique_source_files(base_dir, import_configs)
-
-    working_files_by_source = {
-        file: processing_run_dir / f"{(num + 1):03}_{file.name}"
-        for num, file in enumerate(unique_files)
-    }
-
-    for import_config in import_configs:
-        source_file = resolve_path(import_config.file, base_dir)
-        import_tasks.append(
-            ImportTask(
-                import_config,
-                source_file,
-                working_files_by_source[source_file]
-            )
-        )
-    return import_tasks
-
-
-def move_source_files(import_tasks: list[ImportTask]) -> None:
-    moved_files = set()
-    for import_task in import_tasks:
-        if import_task.source_file in moved_files:
-            continue
-        shutil.move(import_task.source_file, import_task.working_file)
-        moved_files.add(import_task.source_file)
         
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -193,14 +106,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     
 def import_excel_data(
-    source_file: Path, 
+    working_file: Path, 
     conn: Connection, 
     sql_meta_columns: list[SqlMetaColumn], 
     import_config: ImportConfig
 ) -> None:
     
     df = prepare_excel_dataframe(
-        source_file,
+        working_file,
         import_config.sheet,
         import_config.column_mapping,
         import_config.date_formats
@@ -217,10 +130,10 @@ def import_excel_data(
 def import_all_data(
     conn: Connection, 
     import_tasks: list[ImportTask],
-    sql_columns: list[list[SqlMetaColumn]]
+    sql_meta_columns: list[list[SqlMetaColumn]]
 ) -> None:
     try:
-        for import_task, sql_column in zip(import_tasks, sql_columns, strict=True):
+        for import_task, meta_columns in zip(import_tasks, sql_meta_columns, strict=True):
             import_config = import_task.config
 
             logger.info(
@@ -232,7 +145,7 @@ def import_all_data(
                 import_config.mode.value
             )
 
-            import_excel_data(import_task.working_file, conn, sql_column, import_config)
+            import_excel_data(import_task.working_file, conn, meta_columns, import_config)
 
             logger.info(
                 "Import '%s' completed.",
@@ -258,7 +171,7 @@ def main(
     import_configs = read_imports(config_path)
     logger.info("Loaded %d import configuration(s).", len(import_configs))
 
-    logger.info("Validating import sources and target tables.")
+    logger.info("Validating source files.")
     config_dir = config_path.parent
 
     if scheduled:
@@ -273,12 +186,14 @@ def main(
         create_processing_run_dir(processing_run_dir)
         move_source_files(import_tasks)
 
+    logger.info("Validating Excel sources.")
     validate_excel_sources(import_tasks)
     sql_connection_string = os.getenv("SQL_CONNECTION_STRING")
     if sql_connection_string is None or sql_connection_string.strip() == "":
         raise ValueError("Required environment variable 'SQL_CONNECTION_STRING' is not set or is empty.")
     
     with connect(sql_connection_string) as conn:
+        logger.info("Validating target tables and import data.")
         validate_target_tables(conn, import_configs)
         sql_columns = get_sql_meta_columns(conn, import_configs)
         for import_task, sql_column in zip(import_tasks, sql_columns, strict=True):
