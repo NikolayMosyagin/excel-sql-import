@@ -109,6 +109,26 @@ def validate_upsert_key_columns(
     return errors
 
 
+def validate_replace_columns(
+    import_config: ImportConfig,
+    sql_columns: set[str]
+) -> list[str]:
+    errors = []
+    if import_config.mode != ImportMode.REPLACE_BY_COLUMNS:
+        return errors
+
+    missing_replace_columns = set(import_config.replace_columns) - sql_columns
+
+    if missing_replace_columns:
+        errors.append(
+            f"Replace columns are not present in target table "
+            f"'{import_config.schema}.{import_config.table}': "
+            f"{', '.join(sorted(missing_replace_columns))}."
+        )
+
+    return errors
+
+
 def validate_target_columns(
     sql_meta_columns: list[SqlMetaColumn], 
     import_task: ImportTask
@@ -150,6 +170,13 @@ def validate_target_columns(
         )
     )
 
+    errors.extend(
+        validate_replace_columns(
+            config,
+            sql_columns
+        )
+    )
+
     if errors:
         raise ValueError(f"Import '{config.name}':\n" + "\n".join(errors))
     
@@ -186,6 +213,17 @@ def validate_excel_data(
                 f"'{', '.join(import_config.key_columns)}'. "
                 f"Duplicate rows: {', '.join(str(row) for row in duplicate_rows)}."
             )
+    
+    if import_config.mode == ImportMode.REPLACE_BY_COLUMNS:
+        for column in import_config.replace_columns:
+            series = df[column]
+            if (count_na := series.isna().sum()) > 0:
+                raise ValueError(
+                    f"Import '{import_config.name}':\n"
+                    f"Replace column '{column}' cannot contain NULL values "
+                    "for REPLACE_BY_COLUMNS, "
+                    f"but Excel contains {count_na} empty values."
+                )
 
     for column in sql_meta_columns:
         series = df[column.name]

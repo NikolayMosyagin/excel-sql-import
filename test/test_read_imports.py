@@ -317,3 +317,37 @@ key_columns = ["ID", 123]"""
         read_imports(config_path)
 
 
+def test_read_imports_converts_replace_columns_list_to_tuple(tmp_path: Path):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'replace_by_columns'
+replace_columns = ["ID", "Name"]"""
+    config_path = create_imports_file(tmp_path, import_text)
+    import_configs = read_imports(config_path)
+
+    assert len(import_configs) == 1
+    assert isinstance(import_configs[0].replace_columns, tuple)
+    assert import_configs[0].replace_columns == ("ID", "Name")
+
+
+@pytest.mark.parametrize(
+    "replace_columns_value",
+    ["'Id'", 123, 12.0]
+)
+def test_read_imports_rejects_non_list_replace_columns(tmp_path: Path, replace_columns_value: object):
+    import_text = """
+[[imports]]
+name = 'e2e_test'
+file = 'data/e2e_import_test.xlsx'
+sheet = 'RollbackFailure'
+schema = 'dbo'
+table = 'ImportE2ETest'
+mode = 'replace_by_columns'""" + "\n" + f"replace_columns = {replace_columns_value}"
+    config_path = create_imports_file(tmp_path, import_text)
+    with pytest.raises(ValueError, match="Configuration key 'replace_columns' must be a list"):  
+        read_imports(config_path)

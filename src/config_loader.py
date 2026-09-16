@@ -34,6 +34,11 @@ def read_imports(config_path: Path) -> list[ImportConfig]:
                     raise TypeError("Configuration key 'key_columns' must be a list.")
                 import_data["key_columns"] = tuple(source_key_columns)
 
+            if (source_replace_columns := import_data.get("replace_columns")) is not None:
+                if not isinstance(source_replace_columns, list):
+                    raise TypeError("Configuration key 'replace_columns' must be a list.")
+                import_data["replace_columns"] = tuple(source_replace_columns)
+
             import_configs.append(ImportConfig(**import_data))
         except (TypeError, ValueError) as original_error:
             raise ValueError(

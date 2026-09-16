@@ -10,6 +10,7 @@ from src.sql_meta_column import SqlMetaColumn
 from src.excel_data_validators import (
     validate_excel_columns,
     validate_upsert_key_columns,
+    validate_replace_columns,
     validate_date_format_columns,
     validate_target_columns, 
     validate_excel_data,
@@ -225,6 +226,7 @@ def test_validate_date_format_columns_multiple_errors():
     assert "'date_formats' can only be used for SQL date/time columns, but got:" in errors[1]
     assert "Column1 (int)" in errors[1]
 
+
 def test_validate_upsert_key_columns_accept_with_one_key():
     import_config = ImportConfig("config1", "test.xlsx", "sheet1", "schema1", "table1", ImportMode.UPSERT, ("name1",))
     errors = validate_upsert_key_columns(
@@ -272,6 +274,102 @@ def test_validate_upsert_key_columns_reject_missing_key_columns():
     assert "Key columns are not present in target table 'schema1.table1': test, test2." == errors[0]
 
 
+def test_validate_replace_columns_accepts_one_column():
+    import_config = ImportConfig(
+        "config1", 
+        "test.xlsx", 
+        "sheet1", 
+        "schema1", 
+        "table1", 
+        ImportMode.REPLACE_BY_COLUMNS, 
+        replace_columns=("name1",)
+    )
+    errors = validate_replace_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 0
+
+
+def test_validate_replace_columns_accepts_multiple_columns():
+    import_config = ImportConfig(
+        "config1",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1",
+        ImportMode.REPLACE_BY_COLUMNS,
+        replace_columns=("name1", "name2")
+    )
+    errors = validate_replace_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 0
+
+
+@pytest.mark.parametrize(
+    "mode, key_columns",
+    [
+        (ImportMode.REPLACE, ()),
+        (ImportMode.APPEND, ()),
+        (ImportMode.UPSERT, ("name1",))
+    ]
+)
+def test_validate_replace_columns_ignores_other_modes(mode: ImportMode, key_columns: tuple[str, ...]):
+    import_config = ImportConfig(
+        "config1", 
+        "test.xlsx", 
+        "sheet1",
+        "schema1",
+        "table1",
+        mode=mode,
+        key_columns=key_columns
+    )
+
+    errors = validate_replace_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 0
+
+
+def test_validate_replace_columns_rejects_missing_column():
+    import_config = ImportConfig(
+        "config1",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1",
+        ImportMode.REPLACE_BY_COLUMNS, 
+        replace_columns=("name1", "name3")
+    )
+    errors = validate_replace_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 1
+    assert "Replace columns are not present in target table 'schema1.table1': name3." == errors[0]
+
+
+def test_validate_replace_columns_rejects_missing_columns():
+    import_config = ImportConfig(
+        "config1",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1",
+        ImportMode.REPLACE_BY_COLUMNS, 
+        replace_columns=("name2", "test3", "test2")
+    )
+    errors = validate_replace_columns(
+        import_config,
+        {"name1", "name2"}
+    )
+    assert len(errors) == 1
+    assert "Replace columns are not present in target table 'schema1.table1': test2, test3." == errors[0]
+
+
 def test_validate_target_columns_accepts_when_all_validators_return_no_errors(
     sql_columns: list[SqlMetaColumn],
     import_task: ImportTask
@@ -285,11 +383,13 @@ def test_validate_target_columns_accepts_when_all_validators_return_no_errors(
         patch("src.excel_data_validators.validate_excel_columns") as excel_columns_mock,
         patch("src.excel_data_validators.validate_date_format_columns") as date_formats_mock,
         patch("src.excel_data_validators.validate_upsert_key_columns") as upsert_key_mock,
+        patch("src.excel_data_validators.validate_replace_columns") as replace_columns_mock
     ):
         read_excel_mock.return_value = df
         excel_columns_mock.return_value = []
         date_formats_mock.return_value = []
         upsert_key_mock.return_value = []
+        replace_columns_mock.return_value = []
         validate_target_columns(sql_columns, import_task)
 
     read_excel_mock.assert_called_once_with(
@@ -312,6 +412,10 @@ def test_validate_target_columns_accepts_when_all_validators_return_no_errors(
         import_task.config,
         {column.name for column in sql_columns}
     )
+    replace_columns_mock.assert_called_once_with(
+        import_task.config,
+        {column.name for column in sql_columns}
+    )
 
 
 def test_validate_target_columns_aggregates_errors_from_all_validators(
@@ -327,11 +431,13 @@ def test_validate_target_columns_aggregates_errors_from_all_validators(
         patch("src.excel_data_validators.validate_excel_columns") as excel_columns_mock,
         patch("src.excel_data_validators.validate_date_format_columns") as date_formats_mock,
         patch("src.excel_data_validators.validate_upsert_key_columns") as upsert_key_mock,
+        patch("src.excel_data_validators.validate_replace_columns") as replace_columns_mock,
     ):
         read_excel_mock.return_value = df
         excel_columns_mock.return_value = ["Excel columns error"]
         date_formats_mock.return_value = ["Date formats error"]
         upsert_key_mock.return_value = ["Upsert key error"]
+        replace_columns_mock.return_value = ["Replace column error"]
 
         with pytest.raises(ValueError) as exc_info:
             validate_target_columns(sql_columns, import_task)
@@ -356,11 +462,16 @@ def test_validate_target_columns_aggregates_errors_from_all_validators(
         import_task.config,
         {column.name for column in sql_columns}
     )
+    replace_columns_mock.assert_called_once_with(
+        import_task.config,
+        {column.name for column in sql_columns}
+    )
     error_message = str(exc_info.value)
     assert "Import 'config1':" in error_message
     assert "Excel columns error" in error_message
     assert "Date formats error" in error_message
     assert "Upsert key error" in error_message
+    assert "Replace column error" in  error_message
     
 
 def test_validate_excel_data_reject_null_in_non_nullable_column(import_task: ImportTask):
@@ -535,6 +646,85 @@ def test_validate_excel_data_accept_duplicate_values_in_individual_key_columns(t
     data = {
         "name1": [1, 1, 2],
         "name2": [10, 20, 10]
+    }
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    validate_excel_data(sql_columns, import_task)
+
+
+def test_validate_excel_data_accepts_non_null_replace_columns(tmp_path: Path):
+    import_task = ImportTask(
+        ImportConfig(
+            "config1",
+            "test.xlsx",
+            "sheet1",
+            "schema1",
+            "table1",
+            ImportMode.REPLACE_BY_COLUMNS, 
+            replace_columns=("name1", "name2")
+        ),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
+    sql_columns = [
+        SqlMetaColumn("name1", "int", 0, 0, 0, True),
+        SqlMetaColumn("name2", "int", 0, 0, 0, True),
+    ]
+    data = {
+        "name1": [1, 1, 2],
+        "name2": [10, 20, 10]
+    }
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    validate_excel_data(sql_columns, import_task)
+
+
+def test_validate_excel_data_rejects_null_in_replace_column(tmp_path: Path):
+    import_task = ImportTask(
+        ImportConfig(
+            "config1",
+            "test.xlsx",
+            "sheet1",
+            "schema1",
+            "table1",
+            ImportMode.REPLACE_BY_COLUMNS, 
+            replace_columns=("name1", "name2")
+        ),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
+    sql_columns = [
+        SqlMetaColumn("name1", "int", 0, 0, 0, True),
+        SqlMetaColumn("name2", "int", 0, 0, 0, True),
+    ]
+    data = {
+        "name1": [1, 3, 2],
+        "name2": [10, None, 11]
+    }
+    pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    with pytest.raises(ValueError, match="Replace column 'name2' cannot contain NULL values for REPLACE_BY_COLUMNS"):
+        validate_excel_data(sql_columns, import_task)
+
+
+def test_validate_excel_data_accepts_duplicate_replace_column_values(tmp_path: Path):
+    import_task = ImportTask(
+        ImportConfig(
+            "config1",
+            "test.xlsx",
+            "sheet1",
+            "schema1",
+            "table1",
+            ImportMode.REPLACE_BY_COLUMNS, 
+            replace_columns=("name1",)
+        ),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx",
+    )
+    sql_columns = [
+        SqlMetaColumn("name1", "int", 0, 0, 0, True),
+        SqlMetaColumn("name2", "int", 0, 0, 0, True),
+    ]
+    data = {
+        "name1": [1, 2, 1],
+        "name2": [10, None, 11]
     }
     pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     validate_excel_data(sql_columns, import_task)

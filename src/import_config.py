@@ -8,6 +8,7 @@ class ImportMode(Enum):
     REPLACE = "replace"
     APPEND = "append"
     UPSERT = "upsert"
+    REPLACE_BY_COLUMNS = "replace_by_columns"
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,8 @@ class ImportConfig:
     key_columns: tuple[str, ...] = ()
     column_mapping: Mapping[str, str] = field(default_factory=dict)
     date_formats: Mapping[str, str] = field(default_factory=dict)
+    replace_columns: tuple[str, ...] = ()
+
 
     def __post_init__(self) -> None:
         self._validate_attribute(self.name, 'name')
@@ -35,19 +38,27 @@ class ImportConfig:
         if not isinstance(self.key_columns, tuple):
             raise TypeError(f"The attribute 'key_columns' must be of type 'tuple'.")
 
+        if not isinstance(self.replace_columns, tuple):
+            raise TypeError(f"The attribute 'replace_columns' must be of type 'tuple'.")
+
         match self.mode:
             case ImportMode.REPLACE | ImportMode.APPEND:
                 if self.key_columns:
                     raise ValueError(f"The attribute 'key_columns' must be empty for mode '{self.mode.value}'.")
+                if self.replace_columns:
+                    raise ValueError(f"The attribute 'replace_columns' must be empty for mode '{self.mode.value}'.")
             case ImportMode.UPSERT:
                 if not self.key_columns:
                     raise ValueError(f"The attribute 'key_columns' must not be empty for mode '{self.mode.value}'.")
-                if any(not isinstance(value, str) for value in self.key_columns):
-                    raise TypeError(f"All elements of 'key_columns' must be strings.")
-                if any(value.strip() == "" for value in self.key_columns):
-                    raise ValueError(f"The attribute 'key_columns' must contain only non-empty strings.")
-                if len(set(self.key_columns)) != len(self.key_columns):
-                    raise ValueError(f"The attribute 'key_columns' must not contain duplicate column names.")
+                if self.replace_columns:
+                    raise ValueError(f"The attribute 'replace_columns' must be empty for mode '{self.mode.value}'.")
+                self._validate_column_names(self.key_columns, 'key_columns')
+            case ImportMode.REPLACE_BY_COLUMNS:
+                if self.key_columns:
+                    raise ValueError(f"The attribute 'key_columns' must be empty for mode '{self.mode.value}'.")
+                if not self.replace_columns:
+                   raise ValueError(f"The attribute 'replace_columns' must not be empty for mode '{self.mode.value}'.") 
+                self._validate_column_names(self.replace_columns, 'replace_columns')
             case _:
                 raise ValueError(f"Validation rules are not defined for mode '{self.mode.value}'.")
 
@@ -94,3 +105,15 @@ class ImportConfig:
             raise ValueError("The attribute 'date_formats' must contain only non-empty column names.")
         if any(value.strip() == "" for value in self.date_formats.values()):
             raise ValueError("The attribute 'date_formats' must contain only non-empty formats.")
+
+    def _validate_column_names(
+        self,
+        tuple_value: tuple[str, ...],
+        attribute_name: str
+    ) -> None:
+        if any(not isinstance(value, str) for value in tuple_value):
+            raise TypeError(f"All elements of '{attribute_name}' must be strings.")
+        if any(value.strip() == "" for value in tuple_value):
+            raise ValueError(f"The attribute '{attribute_name}' must contain only non-empty strings.")
+        if len(set(tuple_value)) != len(tuple_value):
+            raise ValueError(f"The attribute '{attribute_name}' must not contain duplicate column names.")
