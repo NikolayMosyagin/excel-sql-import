@@ -13,7 +13,9 @@ from src.sql_data_import import (
     validate_upsert_matches,
     update_existing_rows,
     insert_missing_rows,
-    upsert_dataframe
+    upsert_dataframe,
+    delete_rows_by_columns,
+    replace_by_columns_dataframe,
 )
 from src.import_config import ImportConfig, ImportMode
 
@@ -270,3 +272,112 @@ def test_upsert_dataframe_stops_when_match_validation_fails():
     update_mock.assert_not_called()
     insert_missing_mock.assert_not_called()
     cursor_mock.execute.assert_not_called()
+
+
+def test_delete_rows_by_columns_deletes_by_one_column():
+    cursor_mock = MagicMock()
+    df = pd.DataFrame({
+        "name1": [1, 2],
+        "name2": ["str1", "str2"]
+    })
+    replace_columns = ("name1",)
+    target_table = "[schema].[table]"
+    delete_rows_by_columns(cursor_mock, df, replace_columns, target_table)
+    cursor_mock.executemany.assert_called_once()
+    sql_query = cursor_mock.executemany.call_args.args[0]
+    assert f"DELETE FROM {target_table}" in sql_query
+    assert "WHERE [name1] = ?" in sql_query
+    values = cursor_mock.executemany.call_args.args[1]
+    assert values == [(1,), (2,)]
+
+
+def test_delete_rows_by_columns_deletes_by_multiple_columns():
+    cursor_mock = MagicMock()
+    df = pd.DataFrame({
+        "name1": [1, 2],
+        "name2": ["str1", "str2"]
+    })
+    replace_columns = ("name1", "name2")
+    target_table = "[schema].[table]"
+    delete_rows_by_columns(cursor_mock, df, replace_columns, target_table)
+    cursor_mock.executemany.assert_called_once()
+    sql_query = cursor_mock.executemany.call_args.args[0]
+    assert f"DELETE FROM {target_table}" in sql_query
+    assert "WHERE [name1] = ? AND [name2] = ?" in sql_query
+    values = cursor_mock.executemany.call_args.args[1]
+    assert values == [(1, "str1"), (2, "str2")]
+
+
+def test_delete_rows_by_columns_removes_duplicate_replace_values():
+    cursor_mock = MagicMock()
+    df = pd.DataFrame({
+        "name1": [1, 2, 1],
+        "name2": ["str1", "str2", "str3"]
+    })
+    replace_columns = ("name1",)
+    target_table = "[schema].[table]"
+    delete_rows_by_columns(cursor_mock, df, replace_columns, target_table)
+    cursor_mock.executemany.assert_called_once()
+    sql_query = cursor_mock.executemany.call_args.args[0]
+    assert f"DELETE FROM {target_table}" in sql_query
+    assert "WHERE [name1] = ?" in sql_query
+    values = cursor_mock.executemany.call_args.args[1]
+    assert values == [(1,), (2,)]
+
+
+def test_delete_rows_by_columns_uses_only_replace_columns():
+    cursor_mock = MagicMock()
+    df = pd.DataFrame({
+        "name1": [1, 2, 1],
+        "name2": ["str1", "str2", "str3"],
+        "name3": [1.1, 2.2, 3.3],
+    })
+    replace_columns = ("name1",)
+    target_table = "[schema].[table]"
+    delete_rows_by_columns(cursor_mock, df, replace_columns, target_table)
+    cursor_mock.executemany.assert_called_once()
+    sql_query = cursor_mock.executemany.call_args.args[0]
+    assert f"DELETE FROM {target_table}" in sql_query
+    assert "WHERE [name1] = ?" in sql_query
+    assert "[name2] = ?" not in sql_query
+    assert "[name3] = ?" not in sql_query
+
+
+def test_replace_by_columns_dataframe_deletes_matching_rows_and_inserts_dataframe():
+    cursor_mock = MagicMock()
+    cursor_mock.__enter__.return_value = cursor_mock
+    
+    conn_mock = MagicMock()
+    conn_mock.cursor.return_value = cursor_mock
+    df = pd.DataFrame({
+        "name1": [1, 2],
+        "name2": ["str1", "str2"]
+    })
+    column_names = ["name1", "name2"]
+    import_config = ImportConfig(
+        "config1",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1", 
+        mode=ImportMode.REPLACE_BY_COLUMNS, 
+        replace_columns=("name1",)
+    )
+    with (
+        patch("src.sql_data_import.delete_rows_by_columns") as delete_rows_mock,
+        patch("src.sql_data_import.insert_dataframe") as insert_mock
+    ):
+        replace_by_columns_dataframe(conn_mock, df, column_names, import_config)
+
+    delete_rows_mock.assert_called_once_with(
+        cursor_mock,
+        df,
+        import_config.replace_columns,
+        "[schema1].[table1]"
+    )
+    insert_mock.assert_called_once_with(
+        cursor_mock,
+        "[schema1].[table1]",
+        df,
+        column_names
+    )

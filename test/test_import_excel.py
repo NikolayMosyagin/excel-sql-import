@@ -47,7 +47,7 @@ def isolated_logging():
     "mode",
     [ImportMode.REPLACE, ImportMode.APPEND]
 )
-def test_import_excel_data_uses_write_dataframe_for_non_upsert_mode(tmp_path: Path, mode: ImportMode):
+def test_import_excel_data_uses_write_dataframe_for_replace_and_append_modes(tmp_path: Path, mode: ImportMode):
     import_config = ImportConfig(
         "config1", 
         "test.xlsx", 
@@ -73,6 +73,7 @@ def test_import_excel_data_uses_write_dataframe_for_non_upsert_mode(tmp_path: Pa
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
         patch("src.import_excel.write_dataframe") as write_mock,
+        patch("src.import_excel.replace_by_columns_dataframe") as replace_mock,
     ):
         prepare_excel_mock.return_value = df
         import_excel_data(data_file, conn_mock, sql_columns, import_config)
@@ -85,6 +86,7 @@ def test_import_excel_data_uses_write_dataframe_for_non_upsert_mode(tmp_path: Pa
     )
     write_mock.assert_called_once_with(conn_mock, df, ["column1", "ReportDate"], import_config)
     upsert_mock.assert_not_called()
+    replace_mock.assert_not_called()
 
 
 def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path):
@@ -104,6 +106,7 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
         patch("src.import_excel.write_dataframe") as write_mock,
+        patch("src.import_excel.replace_by_columns_dataframe") as replace_mock,
     ):
         prepare_excel_mock.return_value = df
         import_excel_data(data_file, conn_mock, sql_columns, import_config)
@@ -116,6 +119,53 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
     )
     upsert_mock.assert_called_once_with(conn_mock, df, ["column1", "column2"], import_config)
     write_mock.assert_not_called()
+    replace_mock.assert_not_called()
+
+
+def test_import_excel_data_uses_replace_by_columns_dataframe_for_replace_by_columns(tmp_path: Path):
+    import_config = ImportConfig(
+        "config1",
+        "test.xlsx",
+        "sheet1",
+        "schema1",
+        "table1",
+        ImportMode.REPLACE_BY_COLUMNS, 
+        replace_columns=("column1",))
+
+    sql_columns = [
+        SqlMetaColumn("column1", "nvarchar", 100, 0, 0, False),
+        SqlMetaColumn("column2", "int", 0, 0, 0, True),
+    ]
+
+    conn_mock = MagicMock()
+    df = pd.DataFrame({
+        "column2": [10],
+        "column1": ["value1"],
+    })
+    data_file = tmp_path / import_config.file
+    with (
+        patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
+        patch("src.import_excel.upsert_dataframe") as upsert_mock,
+        patch("src.import_excel.write_dataframe") as write_mock,
+        patch("src.import_excel.replace_by_columns_dataframe") as replace_mock,
+    ):
+        prepare_excel_mock.return_value = df
+        import_excel_data(data_file, conn_mock, sql_columns, import_config)
+
+    prepare_excel_mock.assert_called_once_with(
+        data_file,
+        import_config.sheet,
+        import_config.column_mapping,
+        import_config.date_formats
+    )
+    upsert_mock.assert_not_called()
+    write_mock.assert_not_called()
+    replace_mock.assert_called_once_with(
+        conn_mock,
+        df,
+        ["column1", "column2"],
+        import_config
+    )
 
 
 def test_import_all_data_commits_after_all_imports(tmp_path: Path):
@@ -524,18 +574,18 @@ def test_main_does_not_archive_processing_run_when_import_fails(tmp_path: Path):
 
     with (
         patch("src.import_excel.read_imports", return_value=import_configs),
-        patch("src.import_excel.build_manual_import_tasks") as manual_tasks_mock,
+        patch("src.import_excel.build_manual_import_tasks"),
         patch(
             "src.import_excel.get_processing_run_dir",
             return_value=processing_run_dir
-        ) as processing_dir_mock,
+        ),
         patch(
             "src.import_excel.build_scheduled_import_tasks",
             return_value=import_tasks
-        ) as scheduled_tasks_mock,
+        ),
         patch("src.import_excel.validate_import_sources"),
-        patch("src.import_excel.create_processing_run_dir") as create_processing_dir_mock,
-        patch("src.import_excel.move_source_files") as move_files_mock,
+        patch("src.import_excel.create_processing_run_dir"),
+        patch("src.import_excel.move_source_files"),
         patch("src.import_excel.validate_excel_sources"),
         patch("src.import_excel.os.getenv", return_value="connection"),
         patch("src.import_excel.connect") as connect_mock,

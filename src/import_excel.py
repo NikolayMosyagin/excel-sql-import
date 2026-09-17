@@ -15,7 +15,7 @@ from src.config_loader import read_imports
 from src.import_source_validators import validate_excel_sources, validate_import_sources
 from src.excel_data_validators import validate_excel_data, validate_target_columns
 from src.sql_metadata import get_sql_meta_columns, validate_target_tables
-from src.sql_data_import import write_dataframe, upsert_dataframe
+from src.sql_data_import import write_dataframe, upsert_dataframe, replace_by_columns_dataframe
 from src.import_task_builder import build_manual_import_tasks, build_scheduled_import_tasks
 from src.import_file_manager import (
     get_processing_run_dir,
@@ -121,10 +121,15 @@ def import_excel_data(
 
     column_names = [column.name for column in sql_meta_columns]
 
-    if import_config.mode == ImportMode.UPSERT:
-        upsert_dataframe(conn, df, column_names, import_config)
-    else:
-        write_dataframe(conn, df, column_names, import_config)
+    match import_config.mode:
+        case ImportMode.UPSERT:
+            upsert_dataframe(conn, df, column_names, import_config)
+
+        case ImportMode.REPLACE_BY_COLUMNS:
+            replace_by_columns_dataframe(conn, df, column_names, import_config)
+
+        case ImportMode.REPLACE | ImportMode.APPEND:
+            write_dataframe(conn, df, column_names, import_config)
 
 
 def import_all_data(

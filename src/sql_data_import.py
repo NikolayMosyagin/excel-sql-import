@@ -169,3 +169,47 @@ def upsert_dataframe(
 
         insert_missing_rows(cursor, column_names, import_config.key_columns, target_table)
         cursor.execute(f"DROP TABLE {TEMP_TABLE}")
+
+
+def delete_rows_by_columns(
+    cursor: Cursor,
+    df: pd.DataFrame,
+    replace_columns: tuple[str, ...],
+    target_table: str,
+) -> None:
+
+    delete_query = f"""DELETE FROM {target_table}
+WHERE {" AND ".join(
+    f"{quote_identifier(column)} = ?"
+    for column in replace_columns
+)}"""
+
+    replace_values = df[list(replace_columns)].drop_duplicates()
+    values = [
+        normalize_row(row)
+        for row in replace_values.itertuples(index=False, name=None)
+    ]
+
+    cursor.executemany(delete_query, values)
+
+
+def replace_by_columns_dataframe(
+    conn: Connection,
+    df: pd.DataFrame,
+    column_names: list[str], 
+    import_config: ImportConfig
+) -> None:
+
+    target_table = (
+        f"{quote_identifier(import_config.schema)}."
+        f"{quote_identifier(import_config.table)}"
+    )
+
+    with conn.cursor() as cursor:
+        delete_rows_by_columns(
+            cursor,
+            df,
+            import_config.replace_columns,
+            target_table
+        )
+        insert_dataframe(cursor, target_table, df, column_names)
