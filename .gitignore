@@ -5,6 +5,7 @@ data/*
 .env
 instructions/*
 config/imports.toml
+config/imports_*.toml
 
 # Excel temporary files
 ~$*.xlsx

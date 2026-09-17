@@ -9,6 +9,15 @@ table = "Sales"
 mode = "replace"
 
 [[imports]]
+name = "test_replace_columns"
+file = "../data/test_replace_columns.xlsx"
+sheet = "Sheet1"
+schema = "dbo"
+table = "test_replace_columns"
+mode = "replace_by_columns"
+replace_columns=["Name1", "Name2"]
+
+[[imports]]
 name = "products"
 file = "data/products.xlsx"
 sheet = "Products"
