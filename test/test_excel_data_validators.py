@@ -728,3 +728,28 @@ def test_validate_excel_data_accepts_duplicate_replace_column_values(tmp_path: P
     }
     pd.DataFrame(data).to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
     validate_excel_data(sql_columns, import_task)
+
+
+def test_validate_excel_data_accepts_configured_date_formats(tmp_path: Path):
+    import_task = ImportTask(
+        ImportConfig(
+            "test",
+            "test.xlsx",
+            "sheet1",
+            "schema",
+            "table",
+            date_formats={"name1": "%d.%m.%Y", "name2": "%Y-%m-%d %H-%M-%S"}
+        ),
+        tmp_path / "test.xlsx",
+        tmp_path / "test.xlsx"
+    )
+    df = pd.DataFrame({
+        "name1": ["10.12.2026", "31.05.1994"],
+        "name2": ["1994-05-31 23-59-59", "1990-01-20 00-01-59"]
+    })
+    sql_columns = [
+        SqlMetaColumn("name1", "date", 0, 0, 0, True),
+        SqlMetaColumn("name2", "datetime", 0, 0, 0, True),
+    ]
+    df.to_excel(import_task.working_file, sheet_name=import_task.config.sheet, index=False)
+    validate_excel_data(sql_columns, import_task)
