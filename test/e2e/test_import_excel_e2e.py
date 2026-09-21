@@ -154,13 +154,15 @@ mode = \"append\"""", encoding="utf-8")
 
     with sql_connection.cursor() as cursor:
         cursor.execute(f"SELECT ID, Name FROM dbo.{test_table} ORDER BY ID, Name")
-        result = list(tuple(row) for row in cursor.fetchall())
+        first_result = list(tuple(row) for row in cursor.fetchall())
         cursor.execute(f"SELECT ID, Category, Name FROM dbo.{test_composite_table} ORDER BY ID, Category, Name")
-        result.extend(tuple(row) for row in cursor.fetchall())
+        second_result = list(tuple(row) for row in cursor.fetchall())
             
-    assert result == [
+    assert first_result == [
         (1, "First"),
-        (2, "Second"),
+        (2, "Second")
+    ]
+    assert second_result == [
         (10, 100, "Name1"),
         (20, 200, "Name2"),
         (30, 300, "Name3")
