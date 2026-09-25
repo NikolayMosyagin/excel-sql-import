@@ -9,6 +9,7 @@ import sys
 from mssql_python import connect, Connection
 
 from src.import_config import ImportConfig, ImportMode
+from src.import_result import ImportResult
 from src.import_task import ImportTask
 from src.sql_meta_column import SqlMetaColumn
 from src.config_loader import read_imports
@@ -110,7 +111,7 @@ def import_excel_data(
     conn: Connection, 
     sql_meta_columns: list[SqlMetaColumn], 
     import_config: ImportConfig
-) -> None:
+) -> ImportResult:
     
     df = prepare_excel_dataframe(
         working_file,
@@ -123,13 +124,13 @@ def import_excel_data(
 
     match import_config.mode:
         case ImportMode.UPSERT:
-            upsert_dataframe(conn, df, column_names, import_config)
+            return upsert_dataframe(conn, df, column_names, import_config)
 
         case ImportMode.REPLACE_BY_COLUMNS:
-            replace_by_columns_dataframe(conn, df, column_names, import_config)
+            return replace_by_columns_dataframe(conn, df, column_names, import_config)
 
         case ImportMode.REPLACE | ImportMode.APPEND:
-            write_dataframe(conn, df, column_names, import_config)
+            return write_dataframe(conn, df, column_names, import_config)
 
 
 def import_all_data(
@@ -137,6 +138,7 @@ def import_all_data(
     import_tasks: list[ImportTask],
     sql_meta_columns: list[list[SqlMetaColumn]]
 ) -> None:
+    results = []
     try:
         for import_task, meta_columns in zip(import_tasks, sql_meta_columns, strict=True):
             import_config = import_task.config
@@ -150,18 +152,51 @@ def import_all_data(
                 import_config.mode.value
             )
 
-            import_excel_data(import_task.working_file, conn, meta_columns, import_config)
-
-            logger.info(
-                "Import '%s' completed.",
-                import_config.name
-            )
+            result = import_excel_data(import_task.working_file, conn, meta_columns, import_config)
+            results.append(result)
         conn.commit()
-        logger.info("Transaction committed.")
     except Exception:
         conn.rollback()
         logger.warning("Transaction rolled back.")
         raise
+
+    logger.info("Transaction committed.")
+    for import_task, import_result in zip(import_tasks, results, strict=True):
+        log_import_result(import_task.config, import_result)
+
+
+def log_import_result(
+    import_config: ImportConfig,
+    import_result: ImportResult
+)-> None:
+    match import_config.mode:
+        case ImportMode.REPLACE:
+            logger.info(
+                "Import '%s' completed: %d row(s) deleted, %d row(s) inserted.",
+                import_config.name,
+                import_result.deleted,
+                import_result.inserted
+            )
+        case ImportMode.APPEND:
+            logger.info(
+                "Import '%s' completed: %d row(s) inserted.",
+                import_config.name,
+                import_result.inserted
+            )
+        case ImportMode.UPSERT:
+            logger.info(
+                "Import '%s' completed: %d row(s) updated, %d row(s) inserted.",
+                import_config.name,
+                import_result.updated,
+                import_result.inserted
+            )
+        case ImportMode.REPLACE_BY_COLUMNS:
+            logger.info(
+                "Import '%s' completed: %d row(s) deleted, %d row(s) inserted.",
+                import_config.name,
+                import_result.deleted,
+                import_result.inserted
+            )
 
 
 def main(

@@ -19,6 +19,7 @@ from src.import_excel import (
 )
 from src.import_config import ImportConfig, ImportMode
 from src.import_task import ImportTask
+from src.import_result import ImportResult
 
 
 @pytest.fixture
@@ -69,6 +70,7 @@ def test_import_excel_data_uses_write_dataframe_for_replace_and_append_modes(tmp
             "column1": ["value1"],
     })
     data_file = tmp_path / import_config.file
+    expected_result = ImportResult(inserted=2)
     with (
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
@@ -76,7 +78,8 @@ def test_import_excel_data_uses_write_dataframe_for_replace_and_append_modes(tmp
         patch("src.import_excel.replace_by_columns_dataframe") as replace_mock,
     ):
         prepare_excel_mock.return_value = df
-        import_excel_data(data_file, conn_mock, sql_columns, import_config)
+        write_mock.return_value = expected_result
+        current_result = import_excel_data(data_file, conn_mock, sql_columns, import_config)
 
     prepare_excel_mock.assert_called_once_with(
         data_file,
@@ -87,6 +90,7 @@ def test_import_excel_data_uses_write_dataframe_for_replace_and_append_modes(tmp
     write_mock.assert_called_once_with(conn_mock, df, ["column1", "ReportDate"], import_config)
     upsert_mock.assert_not_called()
     replace_mock.assert_not_called()
+    assert expected_result == current_result
 
 
 def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path):
@@ -102,6 +106,7 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
             "column1": ["value1"],
     })
     data_file = tmp_path / import_config.file
+    expected_result = ImportResult(inserted=2, updated=2)
     with (
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
@@ -109,7 +114,8 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
         patch("src.import_excel.replace_by_columns_dataframe") as replace_mock,
     ):
         prepare_excel_mock.return_value = df
-        import_excel_data(data_file, conn_mock, sql_columns, import_config)
+        upsert_mock.return_value = expected_result
+        current_result = import_excel_data(data_file, conn_mock, sql_columns, import_config)
 
     prepare_excel_mock.assert_called_once_with(
         data_file,
@@ -120,6 +126,7 @@ def test_import_excel_data_uses_upsert_dataframe_for_upsert_mode(tmp_path: Path)
     upsert_mock.assert_called_once_with(conn_mock, df, ["column1", "column2"], import_config)
     write_mock.assert_not_called()
     replace_mock.assert_not_called()
+    assert current_result == expected_result
 
 
 def test_import_excel_data_uses_replace_by_columns_dataframe_for_replace_by_columns(tmp_path: Path):
@@ -143,6 +150,7 @@ def test_import_excel_data_uses_replace_by_columns_dataframe_for_replace_by_colu
         "column1": ["value1"],
     })
     data_file = tmp_path / import_config.file
+    expected_result = ImportResult(deleted=3, inserted=2)
     with (
         patch("src.import_excel.prepare_excel_dataframe") as prepare_excel_mock,
         patch("src.import_excel.upsert_dataframe") as upsert_mock,
@@ -150,7 +158,8 @@ def test_import_excel_data_uses_replace_by_columns_dataframe_for_replace_by_colu
         patch("src.import_excel.replace_by_columns_dataframe") as replace_mock,
     ):
         prepare_excel_mock.return_value = df
-        import_excel_data(data_file, conn_mock, sql_columns, import_config)
+        replace_mock.return_value = expected_result
+        current_result = import_excel_data(data_file, conn_mock, sql_columns, import_config)
 
     prepare_excel_mock.assert_called_once_with(
         data_file,
@@ -166,6 +175,7 @@ def test_import_excel_data_uses_replace_by_columns_dataframe_for_replace_by_colu
         ["column1", "column2"],
         import_config
     )
+    assert current_result == expected_result
 
 
 def test_import_all_data_commits_after_all_imports(tmp_path: Path):
@@ -187,6 +197,7 @@ def test_import_all_data_commits_after_all_imports(tmp_path: Path):
     conn_mock = MagicMock()
 
     with patch("src.import_excel.import_excel_data") as import_mock:
+        import_mock.return_value = ImportResult(inserted=2, deleted=2)
         import_all_data(conn_mock, import_tasks, sql_columns)
 
     assert import_mock.call_count == 2

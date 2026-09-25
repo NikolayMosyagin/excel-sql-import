@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from src.import_config import ImportConfig, ImportMode
+from src.import_result import ImportResult
 from src.sql_data_import import (
     write_dataframe,
     upsert_dataframe,
@@ -29,7 +30,7 @@ def test_write_dataframe_appends_rows(sql_connection: Connection, test_table: st
         "Name": ["First", "Second"]
     })
 
-    write_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+    import_result = write_dataframe(sql_connection, df, ["ID", "Name"], import_config)
 
     sql_query = f"""SELECT ID, Name FROM dbo.{test_table} ORDER BY ID"""
     with sql_connection.cursor() as cursor:
@@ -37,6 +38,7 @@ def test_write_dataframe_appends_rows(sql_connection: Connection, test_table: st
         result = list(tuple(row) for row in cursor.fetchall())
 
     assert result == [(1, "First"), (2, "Second"), (100, "Existing")]
+    assert import_result == ImportResult(inserted=2)
 
 
 def test_write_dataframe_appends_rows_across_multiple_batches(
@@ -57,7 +59,9 @@ def test_write_dataframe_appends_rows_across_multiple_batches(
         "Name": [f"Name{i}" for i in range(2001)]
     })
     
-    write_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+    import_result = write_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+
+    assert import_result == ImportResult(inserted=2001)
 
     with sql_connection.cursor() as cursor:
         cursor.execute(f"SELECT COUNT(*) FROM dbo.{test_table}")
@@ -95,7 +99,7 @@ def test_write_dataframe_replaces_rows(sql_connection: Connection, test_table: s
         "Name": ["First", "Second"]
     })
     
-    write_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+    import_result = write_dataframe(sql_connection, df, ["ID", "Name"], import_config)
 
     sql_query = f"""SELECT ID, Name FROM dbo.{test_table} ORDER BY ID"""
     with sql_connection.cursor() as cursor:
@@ -103,6 +107,7 @@ def test_write_dataframe_replaces_rows(sql_connection: Connection, test_table: s
         result = list(tuple(row) for row in cursor.fetchall())
 
     assert result == [(1, "First"), (2, "Second")]
+    assert import_result == ImportResult(inserted=2, deleted=1)
 
 
 def test_upsert_dataframe_updates_existing_and_inserts_new_rows(
@@ -125,13 +130,14 @@ def test_upsert_dataframe_updates_existing_and_inserts_new_rows(
         "ID": [1, 2],
         "Name": ["First", "Second"]
     })
-    upsert_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+    import_result = upsert_dataframe(sql_connection, df, ["ID", "Name"], import_config)
     sql_query = f"""SELECT ID, Name FROM dbo.{test_table} ORDER BY ID"""
     with sql_connection.cursor() as cursor:
         cursor.execute(sql_query)
         result = list(tuple(row) for row in cursor.fetchall())
 
     assert result == [(1, "First"), (2, "Second"), (100, "name100")]
+    assert import_result == ImportResult(inserted=1, updated=1)
 
 
 def test_upsert_dataframe_rejects_multiple_target_matches(
@@ -178,7 +184,7 @@ def test_replace_by_columns_dataframe_replaces_matching_rows(
         "ID": [1, 2],
         "Name": ["First", "Second"]
     })
-    replace_by_columns_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+    import_result = replace_by_columns_dataframe(sql_connection, df, ["ID", "Name"], import_config)
 
     sql_query = f"""SELECT ID, Name FROM dbo.{test_table} ORDER BY ID"""
     with sql_connection.cursor() as cursor:
@@ -186,6 +192,7 @@ def test_replace_by_columns_dataframe_replaces_matching_rows(
         result = list(tuple(row) for row in cursor.fetchall())
     
     assert result == [(1, "First"), (2, "Second"), (100, "name100")]
+    assert import_result == ImportResult(inserted=2, deleted=1)
 
 
 def test_replace_by_columns_dataframe_replaces_multiple_matching_rows(
@@ -208,7 +215,7 @@ def test_replace_by_columns_dataframe_replaces_multiple_matching_rows(
         "ID": [1, 1, 2],
         "Name": ["New1", "New2", "Second"]
     })
-    replace_by_columns_dataframe(sql_connection, df, ["ID", "Name"], import_config)
+    import_result = replace_by_columns_dataframe(sql_connection, df, ["ID", "Name"], import_config)
 
     sql_query = f"""SELECT ID, Name FROM dbo.{test_table} ORDER BY ID, Name"""
     with sql_connection.cursor() as cursor:
@@ -221,6 +228,7 @@ def test_replace_by_columns_dataframe_replaces_multiple_matching_rows(
         (2, "Second"),
         (100, "Keep100")
     ]
+    assert import_result == ImportResult(inserted=3, deleted=2)
 
 
 def test_upsert_dataframe_updates_and_inserts_rows_by_composite_key(
@@ -244,7 +252,7 @@ def test_upsert_dataframe_updates_and_inserts_rows_by_composite_key(
         "Category": [10, 30],
         "Name": ["NewA", "NewC"]
     })
-    upsert_dataframe(sql_connection, df, ["ID", "Category", "Name"], import_config)
+    import_result = upsert_dataframe(sql_connection, df, ["ID", "Category", "Name"], import_config)
 
     sql_query = f"SELECT ID, Category, Name FROM dbo.{test_composite_table} ORDER BY ID, Category, Name"
     with sql_connection.cursor() as cursor:
@@ -257,6 +265,7 @@ def test_upsert_dataframe_updates_and_inserts_rows_by_composite_key(
         (1, 30, "NewC"),
         (5, 10, "Keep"),
     ]
+    assert import_result == ImportResult(inserted=1, updated=1)
 
 
 def test_replace_by_columns_dataframe_replaces_rows_by_composite_columns(
@@ -283,7 +292,7 @@ def test_replace_by_columns_dataframe_replaces_rows_by_composite_columns(
         "Category": [20, 20, 30, 30],
         "Name": ["NewA", "NewB", "NewC", "NewD"]
     })
-    replace_by_columns_dataframe(sql_connection, df, ["ID", "Category", "Name"], import_config)
+    import_result = replace_by_columns_dataframe(sql_connection, df, ["ID", "Category", "Name"], import_config)
 
     sql_query = f"""SELECT ID, Category, Name FROM dbo.{test_composite_table} ORDER BY ID, Category, Name"""
     with sql_connection.cursor() as cursor:
@@ -299,3 +308,4 @@ def test_replace_by_columns_dataframe_replaces_rows_by_composite_columns(
         (5, 20, "keepB"),
         (5, 30, "NewD")
     ]
+    assert import_result == ImportResult(inserted=4, deleted=1)
