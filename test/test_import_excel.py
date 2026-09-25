@@ -20,6 +20,8 @@ from src.import_excel import (
 from src.import_config import ImportConfig, ImportMode
 from src.import_task import ImportTask
 from src.import_result import ImportResult
+from src.exit_codes import ExitCodes
+from src.exceptions import ImportSourceNotFoundError
 
 
 @pytest.fixture
@@ -341,7 +343,7 @@ def test_get_config_path_keeps_absolute_config_path(tmp_path: Path):
     assert result == config_path
 
 
-def test_run_returns_zero_when_import_succeeds(tmp_path: Path):
+def test_run_returns_success_when_import_succeeds(tmp_path: Path):
     app_dir = tmp_path / "app"
     config_path = tmp_path / "config" / "imports.toml"
     scheduled = True
@@ -349,20 +351,22 @@ def test_run_returns_zero_when_import_succeeds(tmp_path: Path):
     with (
         patch("src.import_excel.main") as main_mock,
         patch("src.import_excel.logger.info") as logger_info_mock,
-        patch("src.import_excel.logger.exception") as logger_exception_mock
+        patch("src.import_excel.logger.exception") as logger_exception_mock,
+        patch("src.import_excel.logger.warning") as logger_warning_mock,
     ):
         result = run(app_dir, config_path, scheduled, run_id)
 
-    assert result == 0
+    assert result == ExitCodes.SUCCESS
     assert logger_info_mock.call_count == 2
     args_list = logger_info_mock.call_args_list
     assert args_list[0].args[0] == "Import started."
     assert args_list[1].args[0] == "Import completed successfully."
     main_mock.assert_called_once_with(app_dir, config_path, scheduled, run_id)
     logger_exception_mock.assert_not_called()
+    logger_warning_mock.assert_not_called()
 
 
-def test_run_returns_one_when_import_fails(tmp_path: Path):
+def test_run_returns_critical_error_when_unexpected_error_occurs(tmp_path: Path):
     app_dir = tmp_path / "app"
     config_path = tmp_path / "config" / "imports.toml"
     run_id = "12"
@@ -370,15 +374,61 @@ def test_run_returns_one_when_import_fails(tmp_path: Path):
     with (
         patch("src.import_excel.main") as main_mock,
         patch("src.import_excel.logger.info") as logger_info_mock,
-        patch("src.import_excel.logger.exception") as logger_exception_mock
+        patch("src.import_excel.logger.exception") as logger_exception_mock,
+        patch("src.import_excel.logger.warning") as logger_warning_mock
     ):
         main_mock.side_effect = RuntimeError("Test Error")
         result = run(app_dir, config_path, scheduled, run_id)
 
-    assert result == 1
+    assert result == ExitCodes.CRITICAL_ERROR
     logger_info_mock.assert_called_once_with("Import started.")
     main_mock.assert_called_once_with(app_dir, config_path, scheduled, run_id)
     logger_exception_mock.assert_called_once_with("Import failed.")
+    logger_warning_mock.assert_not_called()
+
+
+def test_run_returns_no_source_data_when_source_file_missing_in_scheduled_mode(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    config_path = tmp_path / "config" / "imports.toml"
+    run_id = "12"
+    scheduled = True
+    source_exception = ImportSourceNotFoundError("File not found")
+    with (
+        patch("src.import_excel.main") as main_mock,
+        patch("src.import_excel.logger.info") as logger_info_mock,
+        patch("src.import_excel.logger.exception") as logger_exception_mock,
+        patch("src.import_excel.logger.warning") as logger_warning_mock,
+    ):
+        main_mock.side_effect = source_exception
+        result = run(app_dir, config_path, scheduled, run_id)
+
+    assert result == ExitCodes.NO_SOURCE_DATA
+    logger_info_mock.assert_called_once_with("Import started.")
+    main_mock.assert_called_once_with(app_dir, config_path, scheduled, run_id)
+    logger_exception_mock.assert_not_called()
+    logger_warning_mock.assert_called_once_with("Import skipped: %s", source_exception)
+
+
+def test_run_returns_critical_error_when_source_file_missing_in_manual_mode(tmp_path: Path):
+    app_dir = tmp_path / "app"
+    config_path = tmp_path / "config" / "imports.toml"
+    run_id = "12"
+    scheduled = False
+    source_exception = ImportSourceNotFoundError("File not found")
+    with (
+        patch("src.import_excel.main") as main_mock,
+        patch("src.import_excel.logger.info") as logger_info_mock,
+        patch("src.import_excel.logger.exception") as logger_exception_mock,
+        patch("src.import_excel.logger.warning") as logger_warning_mock,
+    ):
+        main_mock.side_effect = source_exception
+        result = run(app_dir, config_path, scheduled, run_id)
+
+    assert result == ExitCodes.CRITICAL_ERROR
+    logger_info_mock.assert_called_once_with("Import started.")
+    main_mock.assert_called_once_with(app_dir, config_path, scheduled, run_id)
+    logger_exception_mock.assert_called_once_with("Import failed.")
+    logger_warning_mock.assert_not_called()
 
 
 def test_configure_logging_without_scheduled_does_not_create_log_file(tmp_path: Path, capsys, isolated_logging):

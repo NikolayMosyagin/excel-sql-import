@@ -5,6 +5,7 @@ import pytest
 
 from src.import_config import ImportConfig
 from src.import_task import ImportTask
+from src.exceptions import ImportSourceNotFoundError
 from src.import_source_validators import validate_import_sources, validate_excel_sources
 
 
@@ -29,7 +30,7 @@ def data_frame() -> pd.DataFrame:
 
 
 def test_validate_import_sources_reject_missing_file(import_tasks: list[ImportTask]):
-    with pytest.raises(FileNotFoundError, match="Source file not found:"):
+    with pytest.raises(ImportSourceNotFoundError, match="Source file not found:"):
         validate_import_sources(import_tasks)
 
 
@@ -43,7 +44,7 @@ def test_validate_import_sources_reject_directory(tmp_path: Path):
 
 def test_validate_import_sources_reject_missing_file_in_later_config(import_tasks: list[ImportTask]):
     import_tasks[0].source_file.write_text("", encoding="utf-8")
-    with pytest.raises(FileNotFoundError, match="Source file not found: "):
+    with pytest.raises(ImportSourceNotFoundError, match="Source file not found: "):
         validate_import_sources(import_tasks)
 
 

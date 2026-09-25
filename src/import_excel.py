@@ -27,6 +27,8 @@ from src.import_file_manager import (
 )
 from src.excel_utils import prepare_excel_dataframe
 from src.path_utils import resolve_path
+from src.exceptions import ImportSourceNotFoundError
+from src.exit_codes import ExitCodes
 
 
 logger = logging.getLogger(__name__)
@@ -252,15 +254,22 @@ def run(
     config_path: Path,
     scheduled: bool,
     run_id: str
-) -> int:
+) -> ExitCodes:
     try:
         logger.info("Import started.")
         main(app_dir, config_path, scheduled, run_id)
         logger.info("Import completed successfully.")
-        return 0
+        return ExitCodes.SUCCESS
+    except ImportSourceNotFoundError as error:
+        if scheduled:
+            logger.warning("Import skipped: %s", error)
+            return ExitCodes.NO_SOURCE_DATA
+        else:
+            logger.exception("Import failed.")
+            return ExitCodes.CRITICAL_ERROR
     except Exception:
         logger.exception("Import failed.")
-        return 1
+        return ExitCodes.CRITICAL_ERROR
 
 
 if __name__ == '__main__':

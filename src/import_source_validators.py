@@ -2,13 +2,14 @@ import pandas as pd
 
 from src.import_task import ImportTask
 from src.excel_utils import get_excel_engine
+from src.exceptions import ImportSourceNotFoundError
 
 
 def validate_import_sources(import_tasks: list[ImportTask]) -> None:
     for import_task in import_tasks:
         source_file = import_task.source_file
         if not source_file.exists():
-            raise FileNotFoundError(f"Source file not found: '{source_file}'.")
+            raise ImportSourceNotFoundError(f"Source file not found: '{source_file}'.")
     
         if source_file.is_dir():
             raise IsADirectoryError(f"Expected a file, but found a directory: '{source_file}'.")
