@@ -1,0 +1,15 @@
+- module-name: 'mssql_python_odbc'
+  dlls:
+    - from_filenames:
+        relative_path: 'libs/windows/x64'
+        prefixes:
+          - 'msodbcsql18'
+          - 'msodbcdiag18'
+          - 'mssql-auth'
+      when: 'win32 and arch_amd64'
+
+    - from_filenames:
+        relative_path: 'libs/windows/x64/vcredist'
+        prefixes:
+          - 'msvcp140'
+      when: 'win32 and arch_amd64'
