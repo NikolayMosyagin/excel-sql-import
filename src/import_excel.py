@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import logging
 import os
 from pathlib import Path
-import sys
 
 from mssql_python import connect, Connection
 
@@ -27,8 +26,11 @@ from src.import_file_manager import (
 )
 from src.excel_utils import prepare_excel_dataframe
 from src.path_utils import resolve_path
-from src.exceptions import ImportSourceNotFoundError
+from src.exceptions import ImportSourceNotFoundError, LicenseValidationError
 from src.exit_codes import ExitCodes
+from src.machine_id import get_machine_id
+from src.license_validator import validate_license
+from src.license_public_key import PUBLIC_KEY_PEM
 
 
 logger = logging.getLogger(__name__)
@@ -65,13 +67,6 @@ def configure_logging(
     )
 
 
-def get_root_path() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-
-    return Path(__file__).resolve().parents[1]
-
-
 def get_config_path(
     config: str | None,
     app_dir: Path,
@@ -104,6 +99,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--scheduled",
         action="store_true",
         help="Enable scheduled execution mode."
+    )
+    parser.add_argument(
+        "--show-machine-id",
+        action="store_true",
+        help="Display the current computer Machine ID and exit."
     )
     return parser.parse_args(argv)
 
@@ -207,6 +207,15 @@ def main(
     scheduled: bool,
     run_id: str
 ) -> None:
+
+    logger.info("Validating license.")
+    validate_license(
+        app_dir / "license.json",
+        get_machine_id(),
+        PUBLIC_KEY_PEM
+    )
+    logger.info("License validated successfully.")
+    
     load_dotenv(app_dir / ".env")
     logger.info("Using config: %s", config_path)
 
@@ -260,6 +269,9 @@ def run(
         main(app_dir, config_path, scheduled, run_id)
         logger.info("Import completed successfully.")
         return ExitCodes.SUCCESS
+    except LicenseValidationError as error:
+        logger.exception("License validation failed: %s", error)
+        return ExitCodes.CRITICAL_ERROR
     except ImportSourceNotFoundError as error:
         if scheduled:
             logger.warning("Import skipped: %s", error)
@@ -270,13 +282,3 @@ def run(
     except Exception:
         logger.exception("Import failed.")
         return ExitCodes.CRITICAL_ERROR
-
-
-if __name__ == '__main__':
-    args = parse_args()
-    app_dir = get_root_path()
-    config_path = get_config_path(args.config, app_dir, Path.cwd())
-    config_dir = config_path.parent
-    run_id = create_run_id()
-    configure_logging(args.scheduled, config_dir, run_id)
-    sys.exit(run(app_dir, config_path, args.scheduled, run_id))

@@ -3,3 +3,4 @@ openpyxl
 xlrd
 python-dotenv
 mssql-python
+cryptography
