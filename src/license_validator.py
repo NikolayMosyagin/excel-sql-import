@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.exceptions import InvalidSignature
 
 from src.license_model import License, LicensePayload
+from src.license_clock import check_license_clock
 from src.exceptions import LicenseValidationError
 
 
@@ -96,3 +97,6 @@ def validate_license(
         raise LicenseValidationError("Invalid license signature.")
 
     validate_license_payload(license.payload, expected_machine_id)
+    
+    check_license_clock(expected_machine_id)
+

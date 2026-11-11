@@ -4,3 +4,4 @@ xlrd
 python-dotenv
 mssql-python
 cryptography
+pywin32

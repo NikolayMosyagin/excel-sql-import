@@ -3,3 +3,6 @@ class ImportSourceNotFoundError(Exception):
 
 class LicenseValidationError(Exception):
     pass
+
+class LicenseClockStateSaveError(Exception):
+    pass

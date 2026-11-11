@@ -26,7 +26,7 @@ from src.import_file_manager import (
 )
 from src.excel_utils import prepare_excel_dataframe
 from src.path_utils import resolve_path
-from src.exceptions import ImportSourceNotFoundError, LicenseValidationError
+from src.exceptions import ImportSourceNotFoundError, LicenseValidationError, LicenseClockStateSaveError
 from src.exit_codes import ExitCodes
 from src.machine_id import get_machine_id
 from src.license_validator import validate_license
@@ -209,11 +209,15 @@ def main(
 ) -> None:
 
     logger.info("Validating license.")
-    validate_license(
-        app_dir / "license.json",
-        get_machine_id(),
-        PUBLIC_KEY_PEM
-    )
+    try:
+        validate_license(
+            app_dir / "license.json",
+            get_machine_id(),
+            PUBLIC_KEY_PEM
+        )
+    except LicenseClockStateSaveError:
+        logger.warning("Failed to update license state.")
+
     logger.info("License validated successfully.")
     
     load_dotenv(app_dir / ".env")
@@ -270,7 +274,7 @@ def run(
         logger.info("Import completed successfully.")
         return ExitCodes.SUCCESS
     except LicenseValidationError as error:
-        logger.exception("License validation failed: %s", error)
+        logger.error("License validation failed. Please contact support.")
         return ExitCodes.CRITICAL_ERROR
     except ImportSourceNotFoundError as error:
         if scheduled:
